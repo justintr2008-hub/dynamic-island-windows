@@ -219,7 +219,7 @@ export const CATALOG: ActivityMeta[] = [
     description: 'Activities sent by scripts and other programs through the Island activity API.',
     icon: 'stack',
     category: 'developer',
-    enabled: true,
+    enabled: false,
     priority: 'medium',
     behavior: B(true, true, true, false),
     options: [],
@@ -238,6 +238,21 @@ export const CATALOG: ActivityMeta[] = [
       { key: 'always', type: 'toggle', label: 'Always show', help: 'Keep the numbers on the island instead of only on spikes.', default: false },
       { key: 'cpuSpike', type: 'number', label: 'CPU spike at', default: 90, min: 50, max: 100, unit: '%' },
       { key: 'memSpike', type: 'number', label: 'Memory warning at', default: 92, min: 50, max: 100, unit: '%' },
+    ],
+  },
+  {
+    id: 'claudeStatus',
+    mac: 'never',
+    name: 'Claude Status',
+    description:
+      'Every Claude session at a glance, from the Claude Sessions widget: Claude Code, the Claude app and Chrome, with progress bars for long runs. Needs the widget running (~/.claude/claude-status).',
+    icon: 'claude',
+    category: 'developer',
+    enabled: false,
+    priority: 'medium',
+    behavior: B(true, true, true, false),
+    options: [
+      { key: 'showDone', type: 'toggle', label: 'Pop up when a session finishes', help: 'Shows the island for a moment when a session is done or needs you.', default: true },
     ],
   },
   {

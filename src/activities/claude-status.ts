@@ -1,0 +1,224 @@
+// Claude Status: the Claude Sessions widget (~/.claude/claude-status) inside
+// the island. The widget does all the work (hooks, the app and Chrome watcher,
+// notifications, workflows, estimates) and writes exactly what it shows to
+// island.json; this activity only draws that file and switches to a session
+// when one is clicked.
+
+import type { ActivityStatus, ChipView, RenderEnv, SheetEnv } from '../core/activity';
+import { native } from '../core/native';
+import type { Seg, Tone } from '../core/segments';
+import type { Block, SheetRow, SheetView, Tile } from '../core/sheet';
+import { BaseActivity } from './base';
+
+export type StatusState = 'running' | 'input' | 'done' | 'failed' | 'idle';
+
+/** One row of the widget, as island.json has it. */
+export interface StatusRow {
+  id: string;
+  label: string;
+  where: string;
+  tag: string;
+  state: StatusState;
+  word: string;
+  since: number;
+  grey: boolean;
+  unread: boolean;
+  hidden: boolean;
+  progress: { value: number; text: string; method: string } | null;
+  hwnd: number;
+  tabs: string[];
+}
+
+const POLL_MS = 1000;
+/** The widget rewrites the file at least every 5 s; older means it is closed. */
+const DEAD_MS = 20_000;
+const SHOW_MS = 4000;
+
+/** The widget's colours, in the island's tones. */
+export function toneOf(row: StatusRow): Tone {
+  if (row.grey) return 'dim';
+  return ({ running: 'info', input: 'warn', done: 'good', failed: 'bad', idle: 'dim' } as const)[row.state] ?? 'dim';
+}
+
+/** "4m", like the widget's fmt_age. */
+export function age(seconds: number): string {
+  const s = Math.max(0, Math.round(seconds));
+  if (s < 60) return `${s}s`;
+  if (s < 3600) return `${Math.floor(s / 60)}m`;
+  return `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`;
+}
+
+export function parseIsland(text: string | null): { written: number; rows: StatusRow[] } | null {
+  if (!text) return null;
+  try {
+    const j = JSON.parse(text) as { written?: unknown; sessions?: unknown };
+    if (typeof j.written !== 'number' || !Array.isArray(j.sessions)) return null;
+    const rows = j.sessions.filter((r): r is StatusRow => !!r && typeof r === 'object' && typeof (r as StatusRow).id === 'string');
+    return { written: j.written * 1000, rows };
+  } catch {
+    return null;
+  }
+}
+
+export class ClaudeStatusActivity extends BaseActivity {
+  private rows: StatusRow[] = [];
+  private path = '';
+  private last = new Map<string, StatusState>();
+
+  constructor() {
+    super('claudeStatus');
+  }
+
+  protected async init(): Promise<void> {
+    const env = await native.claudeEnv();
+    if (!env) return;
+    this.path = `${env.configDir}\\claude-status\\island.json`;
+    this.every(POLL_MS, () => void this.poll(), true);
+  }
+
+  private async poll(): Promise<void> {
+    if (!this.path) return;
+    const got = parseIsland(await native.readText(this.path, 256 * 1024));
+    if (!this.alive) return;
+    const rows = got && Date.now() - got.written < DEAD_MS ? got.rows : [];
+
+    // A session that just finished or started waiting on you pops the island.
+    const opts = this.ctx.options<{ showDone?: boolean }>();
+    for (const r of rows) {
+      const before = this.last.get(r.id);
+      if (before && before !== r.state && (r.state === 'input' || r.state === 'done' || r.state === 'failed')) {
+        if (opts.showDone !== false) this.ctx.surface({ key: `${r.id}:${r.state}`, ms: SHOW_MS, level: 'expanded' });
+        this.saw(r.state === 'done' ? 'claude-done' : r.state === 'failed' ? 'claude-error' : 'claude-asks', `claudeStatus:${r.id}`);
+      }
+    }
+    this.last = new Map(rows.map((r) => [r.id, r.state]));
+
+    const sig = (x: StatusRow[]) => JSON.stringify(x);
+    if (sig(rows) !== sig(this.rows)) {
+      this.rows = rows;
+      this.ctx.update();
+    }
+  }
+
+  private waiting(): StatusRow[] {
+    return this.rows.filter((r) => !r.grey && (r.state === 'input' || r.state === 'failed'));
+  }
+
+  /** The row the pill talks about: the widget's own order (running first). */
+  private top(): StatusRow | null {
+    return this.waiting()[0] ?? this.rows[0] ?? null;
+  }
+
+  status(): ActivityStatus {
+    if (!this.rows.length) return { active: false };
+    const running = this.rows.some((r) => !r.grey && r.state === 'running');
+    const waiting = this.waiting().length;
+    const bar = this.rows.find((r) => r.progress)?.progress;
+    return {
+      active: true,
+      weight: running || waiting ? 'foreground' : 'background',
+      summary: waiting ? `${waiting} awaiting you` : `${this.rows.length} Claude session${this.rows.length === 1 ? '' : 's'}`,
+      beam: waiting
+        ? { tone: 'warn', motion: 'pulse' }
+        : bar
+          ? { tone: 'info', motion: 'progress', value: bar.value }
+          : running
+            ? { tone: 'info', motion: 'orbit' }
+            : null,
+    };
+  }
+
+  chip(): ChipView | null {
+    const t = this.top();
+    if (!t) return null;
+    return { icon: 'claude', label: String(this.rows.length), dot: toneOf(t), pulse: t.state === 'running' && !t.grey };
+  }
+
+  render(env: RenderEnv): Seg[] {
+    const t = this.top();
+    if (!t) return [];
+    const roomy = env.level === 'expanded' || env.level === 'maximum';
+    const segs: Seg[] = [{ t: 'icon', key: 'mark', icon: 'claude', tone: 'claude', prio: 0 }];
+    if (env.vertical) {
+      segs.push({ t: 'dot', key: 'dot', tone: toneOf(t), pulse: t.state === 'running' && !t.grey, prio: 0 });
+      return segs;
+    }
+    // Compact mode's pill of dots, one per session.
+    const dots = this.rows.slice(0, roomy ? 8 : 5);
+    dots.forEach((r, i) => segs.push({ t: 'dot', key: `d:${r.id}`, tone: toneOf(r), pulse: r.state === 'running' && !r.grey, prio: i ? 4 : 0, tip: `${r.label} · ${r.where}` }));
+    segs.push({ t: 'text', key: 'label', text: t.label, weight: 'semibold', prio: 1, max: roomy ? 220 : 140 });
+    if (roomy && t.progress) segs.push({ t: 'progress', key: 'bar', value: t.progress.value, tone: 'claude', w: 70, side: 'end', prio: 3 });
+    segs.push({
+      t: 'text',
+      key: 'state',
+      text: t.progress && roomy ? t.progress.text : `${t.word} ${age(env.now / 1000 - t.since)}`,
+      tone: t.grey ? 'muted' : toneOf(t),
+      size: 'sm',
+      side: 'end',
+      prio: 2,
+    });
+    return segs;
+  }
+
+  private sheetRows(now: number): SheetRow[] {
+    return this.rows.map((r) => ({
+      key: r.id,
+      dot: toneOf(r),
+      pulse: r.state === 'running' && !r.grey,
+      title: r.label,
+      detail: `${r.where} · ${r.word} ${age(now / 1000 - r.since)}${r.hidden ? ' · hidden' : ''}`,
+      badge: r.unread ? 'new' : undefined,
+      tone: r.unread ? 'violet' : undefined,
+      action: 'jump',
+      arg: r.id,
+      tip: `${r.label} · ${r.where}`,
+    }));
+  }
+
+  sheet(env: SheetEnv): SheetView | null {
+    if (!this.rows.length) return null;
+    const waiting = this.waiting().length;
+    const blocks: Block[] = [
+      {
+        t: 'head',
+        key: 'head',
+        icon: 'claude',
+        tone: 'claude',
+        title: 'Claude',
+        sub: waiting ? `${waiting} awaiting you` : `${this.rows.length} session${this.rows.length === 1 ? '' : 's'}`,
+      },
+    ];
+    // Each row, with its progress bar under it like the widget.
+    const rows = this.sheetRows(env.now);
+    rows.forEach((row, i) => {
+      blocks.push({ t: 'rows', key: `r:${row.key}`, items: [row] });
+      const p = this.rows[i].progress;
+      if (p) blocks.push({ t: 'meter', key: `m:${row.key}`, label: p.method, value: p.value, text: p.text, tone: 'claude' });
+    });
+    return { key: 'claudeStatus', blocks };
+  }
+
+  tile(env: SheetEnv): Tile | null {
+    if (!this.rows.length) return null;
+    return {
+      key: 'claudeStatus',
+      span: 2,
+      rows: 2,
+      tone: 'claude',
+      body: { k: 'list', icon: 'claude', label: 'Claude sessions', rows: this.sheetRows(env.now), empty: 'All quiet' },
+    };
+  }
+
+  async action(name: string, arg: unknown): Promise<void> {
+    if (name !== 'jump') return;
+    const r = this.rows.find((x) => x.id === arg);
+    if (!r) return;
+    await native.allowForeground();
+    // Windows Terminal: pick the session's tab by name, like the widget does.
+    for (const title of r.tabs) {
+      const win = await native.selectTerminalTab(title);
+      if (win) return void (await native.activate(win));
+    }
+    if (r.hwnd) await native.activate(r.hwnd);
+  }
+}
