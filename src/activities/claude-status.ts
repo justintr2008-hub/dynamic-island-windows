@@ -40,10 +40,13 @@ export function toneOf(row: StatusRow): Tone {
   return ({ running: 'info', input: 'warn', done: 'good', failed: 'bad', idle: 'dim' } as const)[row.state] ?? 'dim';
 }
 
-/** "4m", like the widget's fmt_age. */
+/**
+ * "4m", like the widget's fmt_age, but never seconds: the island rolls every
+ * text change, so a ticking seconds count would roll every second.
+ */
 export function age(seconds: number): string {
   const s = Math.max(0, Math.round(seconds));
-  if (s < 60) return `${s}s`;
+  if (s < 60) return '';
   if (s < 3600) return `${Math.floor(s / 60)}m`;
   return `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`;
 }
@@ -151,7 +154,7 @@ export class ClaudeStatusActivity extends BaseActivity {
     segs.push({
       t: 'text',
       key: 'state',
-      text: t.progress && roomy ? t.progress.text : `${t.word} ${age(env.now / 1000 - t.since)}`,
+      text: t.progress && roomy ? t.progress.text : [t.word, age(env.now / 1000 - t.since)].filter(Boolean).join(' '),
       tone: t.grey ? 'muted' : toneOf(t),
       size: 'sm',
       side: 'end',
@@ -166,7 +169,7 @@ export class ClaudeStatusActivity extends BaseActivity {
       dot: toneOf(r),
       pulse: r.state === 'running' && !r.grey,
       title: r.label,
-      detail: `${r.where} · ${r.word} ${age(now / 1000 - r.since)}${r.hidden ? ' · hidden' : ''}`,
+      detail: `${r.where} · ${[r.word, age(now / 1000 - r.since)].filter(Boolean).join(' ')}${r.hidden ? ' · hidden' : ''}`,
       badge: r.unread ? 'new' : undefined,
       tone: r.unread ? 'violet' : undefined,
       action: 'jump',

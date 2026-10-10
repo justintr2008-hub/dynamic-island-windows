@@ -36,7 +36,7 @@ describe('Claude Status', () => {
   });
 
   it('formats ages like the widget', () => {
-    expect(age(42)).toBe('42s');
+    expect(age(42)).toBe(''); // no ticking seconds
     expect(age(240)).toBe('4m');
     expect(age(3900)).toBe('1h 5m');
   });
