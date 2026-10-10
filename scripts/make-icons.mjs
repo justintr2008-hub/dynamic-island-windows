@@ -138,7 +138,7 @@ function appIcon(size) {
     // capsule body
     { sd: (x, y) => sdRoundRect(x, y, 0.5, 0.5, 0.345, 0.13, 0.13), color: () => hex('#050506') },
     // status dot
-    { sd: (x, y) => sdCircle(x, y, 0.27, 0.5, 0.06), color: () => hex('#e8845f') },
+    { sd: (x, y) => sdCircle(x, y, 0.27, 0.5, 0.06), color: () => hex('#60a5fa') },
     // text bar
     { sd: (x, y) => sdRoundRect(x, y, 0.52, 0.5, 0.15, 0.028, 0.028), color: () => hex('#f5f4ef', 0.92) },
     { sd: (x, y) => sdRoundRect(x, y, 0.75, 0.5, 0.035, 0.028, 0.028), color: () => hex('#f5f4ef', 0.45) },
