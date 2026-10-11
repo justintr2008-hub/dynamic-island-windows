@@ -146,9 +146,12 @@ export class ClaudeStatusActivity extends BaseActivity {
       segs.push({ t: 'dot', key: 'dot', tone: toneOf(t), pulse: t.state === 'running' && !t.grey, prio: 0 });
       return segs;
     }
-    // Compact mode's pill of dots, one per session.
-    const dots = this.rows.slice(0, roomy ? 8 : 5);
+    // At rest it is only the dots, like the widget's compact mode; the name
+    // shows when the island grows (hover, click, or a session finishing).
+    const resting = !roomy && !env.hover && !env.open && !env.surfaced;
+    const dots = this.rows.slice(0, 8);
     dots.forEach((r, i) => segs.push({ t: 'dot', key: `d:${r.id}`, tone: toneOf(r), pulse: r.state === 'running' && !r.grey, prio: i ? 4 : 0, tip: `${r.label} · ${r.where}` }));
+    if (resting) return segs;
     segs.push({ t: 'text', key: 'label', text: t.label, weight: 'semibold', prio: 1, max: roomy ? 220 : 140 });
     if (roomy && t.progress) segs.push({ t: 'progress', key: 'bar', value: t.progress.value, tone: 'claude', w: 70, side: 'end', prio: 3 });
     segs.push({
