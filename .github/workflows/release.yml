@@ -1,0 +1,83 @@
+name: Release
+
+# Push a version tag (git tag v0.2.7 && git push mine v0.2.7) and this builds
+# Island.exe for Windows and Island.dmg for Mac, then publishes both on the
+# repo's Releases page, where anyone can download them.
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    env:
+      # Inside the repo, so rust-cache keeps it between runs.
+      CARGO_TARGET_DIR: ${{ github.workspace }}/target
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: npm ci
+      # One self-contained exe in release/ (scripts/tauri.mjs).
+      - run: npm run release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: island-windows
+          path: release/Island.exe
+
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+      - run: npm ci
+      - run: npm run build:web
+      - run: npx tauri build --target universal-apple-darwin --bundles dmg
+      - name: Name the dmg
+        run: cp target/universal-apple-darwin/release/bundle/dmg/*.dmg Island.dmg
+      - uses: actions/upload-artifact@v4
+        with:
+          name: island-macos
+          path: Island.dmg
+
+  publish:
+    needs: [windows, macos]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          # A manual run without a tag publishes under "latest-build".
+          tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || 'latest-build' }}
+          name: Island ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || 'latest build' }}
+          generate_release_notes: true
+          make_latest: true
+          files: |
+            Island.exe
+            Island.dmg
+          body: |
+            **Windows 10/11:** download `Island.exe` and run it. If Windows shows "Windows protected your PC", click **More info → Run anyway** (the app isn't code-signed yet).
+
+            **Mac:** download `Island.dmg`, drag Island to Applications, then right-click it → **Open** the first time.

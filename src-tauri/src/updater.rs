@@ -13,7 +13,7 @@ use std::time::Duration;
 use serde::Deserialize;
 use tauri::{AppHandle, Emitter};
 
-const REPO: &str = "cutsandedges21/windows-dynamic-island";
+const REPO: &str = "justintr2008-hub/dynamic-island-windows";
 const ASSET: &str = "Island.exe";
 /// Where the running exe goes while its replacement moves in.
 const OLD: &str = "Island.old.exe";
