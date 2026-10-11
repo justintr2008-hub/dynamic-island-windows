@@ -2,6 +2,7 @@
 // a browser, Apple Music, local players — with play/pause and skip.
 
 import { reducedMotion } from '../core/animator';
+import { artColor } from '../core/artcolor';
 import type { PetSignal } from '../core/pet';
 import type { ActivityStatus, ChipView, RenderEnv, SheetEnv } from '../core/activity';
 import { clock } from '../core/format';
@@ -116,7 +117,9 @@ export class MusicActivity extends BaseActivity {
     const art: Seg = showArt
       ? { t: 'art', key: 'art', src: m.thumbnail, icon: 'music', prio: 3 }
       : { t: 'icon', key: 'art', icon: 'music', tone: 'accent', prio: 3 };
-    const bars: Seg = { t: 'bars', key: 'bars', active: playing, tone: 'accent', side: 'end', prio: 2 };
+    // Tinted with the cover's colour, like the iPhone.
+    const color = artColor(m.thumbnail, () => this.ctx.update()) ?? undefined;
+    const bars: Seg = { t: 'bars', key: 'bars', active: playing, tone: 'accent', color, side: 'end', prio: 2 };
     const title: Seg = { t: 'text', key: 'title', text: m.title, weight: 'semibold', prio: 0, max: env.level === 'compact' ? 120 : undefined };
 
     if (env.level === 'compact' || env.level === 'idle') {
