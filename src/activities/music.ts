@@ -8,7 +8,7 @@ import type { ActivityStatus, ChipView, RenderEnv, SheetEnv } from '../core/acti
 import { clock } from '../core/format';
 import { emitLocal, native, type MediaState } from '../core/native';
 import type { Seg } from '../core/segments';
-import type { SheetButton, Tile } from '../core/sheet';
+import type { SheetButton, SheetView, Tile } from '../core/sheet';
 import { BaseActivity } from './base';
 
 export class MusicActivity extends BaseActivity {
@@ -146,6 +146,40 @@ export class MusicActivity extends BaseActivity {
     return segs;
   }
 
+  /** Pointing at the song: the iPhone's expanded player under the pill. */
+  sheet(env: SheetEnv): SheetView | null {
+    const m = this.m;
+    if (env.reason !== 'hover' || !m || !this.status().active) return null;
+    const playing = m.status === 'playing';
+    const showArt = this.ctx.options<{ showArt: boolean }>().showArt !== false;
+    const buttons: SheetButton[] = env.interactive
+      ? [
+          { key: 'prev', icon: 'rewind', action: 'prev', style: 'ghost', tip: 'Previous' },
+          { key: 'toggle', icon: playing ? 'pause-solid' : 'play-solid', action: 'toggle', style: 'ghost', tip: playing ? 'Pause' : 'Play' },
+          { key: 'next', icon: 'forward', action: 'next', style: 'ghost', tip: 'Next' },
+        ]
+      : [];
+    return {
+      key: 'now-playing',
+      merge: true,
+      blocks: [
+        {
+          t: 'player',
+          key: 'player',
+          art: showArt ? m.thumbnail : null,
+          title: m.title,
+          artist: m.artist || m.app || '',
+          playing,
+          position: this.position(env.now),
+          duration: m.duration,
+          color: artColor(m.thumbnail, () => this.ctx.update()) ?? undefined,
+          seek: env.interactive && m.duration ? 'seek' : undefined,
+          buttons,
+        },
+      ],
+    };
+  }
+
   /** Now playing, or paused not long ago: the same moment status() calls active. */
   tile(env: SheetEnv): Tile | null {
     const m = this.m;
@@ -166,7 +200,17 @@ export class MusicActivity extends BaseActivity {
     return { key: 'music', span: 2, rows: 2, body: { k: 'media', art: showArt ? m.thumbnail : null, title: m.title, artist: m.artist || m.app || '', playing, progress, buttons } };
   }
 
-  async action(name: string): Promise<void> {
+  async action(name: string, arg?: unknown): Promise<void> {
+    if (name === 'seek') {
+      const m = this.m;
+      if (!m?.duration || typeof arg !== 'number') return;
+      const to = arg * m.duration;
+      // Move the bar now; the player's own report follows.
+      this.apply({ ...m, position: to, updatedAt: Date.now() });
+      if (!native.demo) await native.mediaControl('seek', to);
+      setTimeout(() => void native.mediaState().then((s) => s && this.apply(s)), 350);
+      return;
+    }
     if (name !== 'toggle' && name !== 'next' && name !== 'prev') return;
     if (native.demo) {
       if (this.m && name === 'toggle') this.apply({ ...this.m, status: this.m.status === 'playing' ? 'paused' : 'playing', updatedAt: Date.now(), position: this.position(Date.now()) });

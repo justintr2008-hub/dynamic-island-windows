@@ -11,6 +11,7 @@
 // textContent; only icons.ts markup is set as HTML.
 
 import { SpringSet, reducedMotion } from './animator';
+import { clock } from './format';
 import { icon } from './icons';
 import type { Anchor, Area, Rect } from './layout';
 import { springAnimate } from './renderer';
@@ -45,6 +46,19 @@ export interface SheetRow {
   button?: SheetButton;
 }
 
+/** The pill's chips (other activities, "+N"), carried onto a card that covers the pill. */
+export interface SheetChip {
+  key: string;
+  icon?: string;
+  label?: string;
+  dot?: Tone;
+  pulse?: boolean;
+  tone?: Tone;
+  action: string;
+  arg?: unknown;
+  tip?: string;
+}
+
 export interface Choice {
   key: string;
   label: string;
@@ -55,7 +69,7 @@ export interface Choice {
 }
 
 export type Block =
-  | { t: 'head'; key: string; icon?: string; tone?: Tone; title: string; sub?: string; buttons?: SheetButton[] }
+  | { t: 'head'; key: string; icon?: string; tone?: Tone; title: string; sub?: string; buttons?: SheetButton[]; chips?: SheetChip[] }
   /** Wrapped text. `bubble` scrolls after `lines` lines (default 8). */
   | { t: 'text'; key: string; text: string; tone?: Tone; size?: 'sm' | 'md'; bubble?: boolean; lines?: number }
   | { t: 'code'; key: string; text: string }
@@ -68,6 +82,12 @@ export type Block =
   | { t: 'stats'; key: string; items: Array<{ key: string; label: string; value: string; tone?: Tone; tip?: string }> }
   /** A thin bar draining until `until` (epoch ms) out of `total` ms. */
   | { t: 'countdown'; key: string; until: number; total: number; tone?: Tone }
+  /**
+   * Now playing, laid out like the iPhone's expanded island: cover, title and
+   * wave on top, a scrubber with times, then big transport buttons. `seek`
+   * fires with the clicked spot (0..1) when the scrubber is clicked.
+   */
+  | { t: 'player'; key: string; art: string | null; title: string; artist: string; playing: boolean; position: number | null; duration: number | null; color?: string; seek?: string; buttons: SheetButton[]; chips?: SheetChip[] }
   /**
    * The Control Center grid. `items` already know where they sit (the island
    * packed them); `tray` holds the ones taken off the grid, shown while editing.
@@ -116,6 +136,8 @@ export interface SheetView {
   wide?: boolean;
   /** The view knows how wide it wants to be (the grid sizes itself from its cells). */
   width?: number;
+  /** The card grows out of the pill and covers it, one shape like the iPhone's (now playing). */
+  merge?: boolean;
 }
 
 export type SheetAction = (action: string, arg: unknown, source: HTMLElement) => void;
@@ -143,6 +165,8 @@ export function mapActions(blocks: Block[], fn: (action: string) => string): Blo
         return { ...b, items: b.items.map((c) => ({ ...c, action: fn(c.action) })) };
       case 'tiles':
         return { ...b, items: b.items.map((t) => ({ ...t, action: t.action ? fn(t.action) : undefined, body: body(t.body) })) };
+      case 'player':
+        return { ...b, buttons: b.buttons.map(btn), seek: b.seek ? fn(b.seek) : undefined };
       default:
         return b;
     }
@@ -150,6 +174,22 @@ export function mapActions(blocks: Block[], fn: (action: string) => string): Blo
 }
 
 const GAP = 8;
+/** Corner radius of a merged card (island.css .sheet.merged). */
+const MERGED_RADIUS = 34;
+/** How long a merged card takes to grow out of the pill, and to close back into it. */
+const CLOSE_MS = 340;
+
+/**
+ * The merged card's move, 0 → 1 over u = 0 → 1: a critically damped spring's own curve
+ * (springs.morph) cut off at CLOSE_MS and stretched to land exactly on 1. Opening runs it
+ * forwards; closing runs it backwards, so the two are mirror images with no creeping tail.
+ */
+function morphCurve(u: number): number {
+  const T = CLOSE_MS / 1000;
+  const omega = (2 * Math.PI) / springs.morph.response;
+  const f = (t: number) => 1 - (1 + omega * t) * Math.exp(-omega * t);
+  return f(u * T) / f(T);
+}
 /** The card grows out of a sliver about the size of a resting pill. */
 const SLIVER = 26;
 const EDGE = 8;
@@ -190,7 +230,29 @@ interface BlockNode {
 export class SheetRenderer {
   readonly el: HTMLElement;
   private inner: HTMLElement;
-  private readonly springs: SpringSet<'h' | 'o' | 's' | 'b' | 'w'>;
+  private readonly springs: SpringSet<'h' | 'o' | 's' | 'b' | 'w' | 'm'>;
+  /** The card shown is merged into the pill (`m` springs 0 → 1 as it slides over it). */
+  private merged = false;
+  /** Where the content's left edge sits on screen, in whole pixels (see place()). */
+  private innerX: number | null = null;
+  /** Merged: where the card's box sits on screen, in whole pixels, and its content height (see placeMerged()). */
+  private boxX: number | null = null;
+  private boxY: number | null = null;
+  private fitH = 0;
+  private mergedStyled = false;
+  /** A merged card is shrinking back into the pill (it follows the pill until it lands). */
+  private closingMerged = false;
+  private aimW = 0;
+  /** Card width when the close started (its progress runs from there to the pill). */
+  private closeFromW = 0;
+  /** The frame request driving a merged close. */
+  private closeFrame = 0;
+  /** A merged card growing out of the pill: where it is heading (fit() updates the height). */
+  private opening: { start: number; w0: number; h0: number; w1: number; h1: number } | null = null;
+  private openFrame = 0;
+  private readonly bg: HTMLElement;
+  /** Merged: the card's shadow, drawn round the growing shape (the box itself is clipped to it). */
+  private readonly shadow: HTMLElement;
   private readonly nodes = new Map<string, BlockNode>();
   private readonly tileSigs = new WeakMap<HTMLElement, string>();
   private viewKey: string | null = null;
@@ -223,17 +285,20 @@ export class SheetRenderer {
     private readonly onMove: () => void,
   ) {
     this.el = make('div', 'sheet');
-    this.el.append(make('div', 'sheet-bg'));
+    this.bg = make('div', 'sheet-bg');
+    this.el.append(this.bg);
     this.inner = make('div', 'sheet-inner');
     this.el.append(this.inner);
     this.el.style.display = 'none';
-    stage.append(this.el);
+    this.shadow = make('div', 'sheet-shadow');
+    this.shadow.style.display = 'none';
+    stage.append(this.shadow, this.el);
 
     this.springs = new SpringSet(
-      { h: SLIVER, o: 0, s: 0.94, b: 8, w: this.width },
+      { h: SLIVER, o: 0, s: 0.94, b: 8, w: this.width, m: 0 },
       (v) => this.place(v),
       springs.shell,
-      { h: 0.3, o: 0.002, s: 0.0005, b: 0.02, w: 0.3 },
+      { h: 0.3, o: 0.002, s: 0.0005, b: 0.02, w: 0.3, m: 0.002 },
     );
     this.ready = true;
 
@@ -245,13 +310,46 @@ export class SheetRenderer {
         return;
       }
       const target = (e.target as HTMLElement).closest<HTMLElement>('[data-action]');
-      if (!target || !this.el.contains(target)) return;
+      if (!target || !this.el.contains(target)) {
+        // Merged, the card is the pill: a click on it does what a click on the pill does.
+        if (this.merged) this.onAction('island:tap', null, this.el);
+        return;
+      }
       e.stopPropagation();
       springAnimate(target, [{ transform: 'scale(0.94)' }, { transform: 'none' }], springs.bouncy);
       this.onAction(target.dataset.action!, args.get(target), target);
     });
+    // Merged, the card covers the pill, so it takes the pill's right-click and scroll too.
+    this.el.addEventListener('contextmenu', (e) => {
+      if (!this.merged) return;
+      e.preventDefault();
+      this.onAction('island:menu', null, this.el);
+    });
+    this.el.addEventListener(
+      'wheel',
+      (e) => {
+        if (!this.merged) return;
+        // A long card (many chats) scrolls its list instead.
+        const list = this.inner;
+        if (list.scrollHeight > list.clientHeight + 1) return;
+        // Scrolling picks another activity: the card follows it, not the segment last pointed at.
+        this.onAction('island:hover-key', null, this.el);
+        this.onAction('island:wheel', Math.sign(e.deltaY || e.deltaX), this.el);
+      },
+      { passive: true },
+    );
     this.el.addEventListener('pointerenter', () => this.onAction('island:sheet-hover', true, this.el));
     this.el.addEventListener('pointerleave', () => this.onAction('island:sheet-hover', false, this.el));
+  }
+
+  /** Showing a card that grew out of the pill and covers it. */
+  get isMerged(): boolean {
+    return this.shown && this.merged;
+  }
+
+  /** A merged card covers the pill: showing, or still shrinking back into it. */
+  get coversPill(): boolean {
+    return (this.shown && this.merged) || this.closingMerged;
   }
 
   get visible(): boolean {
@@ -293,6 +391,7 @@ export class SheetRenderer {
   /** Called on every pill frame: the card stays attached to the moving pill. */
   follow(pill: Rect): void {
     this.pill = pill;
+    // Shrinking into the pill while the pill itself settles: aim at where it is now.
     if (this.shown || !this.springs.settled) this.place();
   }
 
@@ -313,14 +412,35 @@ export class SheetRenderer {
     this.inner.style.setProperty('--cols', this.width >= 520 ? '4' : '2');
 
     const appearing = !this.shown;
+    const merge = view.merge === true;
     if (appearing) {
+      cancelAnimationFrame(this.closeFrame);
+      this.closingMerged = false;
+      document.documentElement.classList.remove('card-closing');
+      this.inner.style.opacity = '';
+      this.stopFades(this.inner);
+    }
+    const mergeChanged = merge !== this.merged;
+    this.merged = merge;
+    this.el.classList.toggle('merged', merge);
+    if (appearing && merge) {
+      // Born as the pill itself, then grown: one shape, not a second card.
       this.el.style.display = '';
       this.shown = true;
-      this.springs.set({ h: SLIVER, o: 0, s: 0.94, b: 8, w: this.width }, { immediate: true });
+      const p = this.pill;
+      this.springs.set({ h: p.h, o: 1, s: 1, b: 0, w: p.w, m: 1 }, { immediate: true });
+      if (geo.immediate || reducedMotion()) this.springs.set({ w: this.width }, { immediate: true });
+      else this.grow(p.w, p.h);
+    } else if (appearing) {
+      this.el.style.display = '';
+      this.shown = true;
+      this.springs.set({ h: SLIVER, o: 0, s: 0.94, b: 8, w: this.width, m: 0 }, { immediate: true });
     } else {
+      if (mergeChanged) this.springs.set({ m: merge ? 1 : 0 }, { config: springs.shell, immediate: geo.immediate });
       // A new width (the hover card turning into the Control Center as the pill opens)
       // springs with the pill instead of jumping in one frame.
-      this.springs.set({ w: this.width }, { config: springs.shell, immediate: geo.immediate });
+      if (this.opening) this.opening.w1 = this.width;
+      else this.springs.set({ w: this.width }, { config: merge ? springs.morph : springs.shell, immediate: geo.immediate });
     }
     let changed = false;
     if (view.key !== this.viewKey) {
@@ -332,27 +452,72 @@ export class SheetRenderer {
     this.pinInner(this.inner, this.width);
     changed = this.patch(view.blocks) || changed;
     if (changed || appearing) this.fit(geo.immediate === true);
-    if (appearing) this.springs.set({ o: 1, s: 1, b: 0 }, { config: { o: springs.fade, s: springs.bouncy, b: springs.fade }, immediate: geo.immediate });
+    if (appearing && merge) springAnimate(this.inner, [{ opacity: 0.35 }, { opacity: 1 }], springs.fade);
+    // New content gets its whole-pixel spot now, not on the next frame the springs happen to move.
+    if (this.merged) this.place();
+    else if (appearing) this.springs.set({ o: 1, s: 1, b: 0 }, { config: { o: springs.fade, s: springs.bouncy, b: springs.fade }, immediate: geo.immediate });
   }
 
   // ---------------------------------------------------------------- placement
 
   private hide(immediate: boolean): void {
     if (!this.shown) return;
+    // Gone mid-grow: the grow stops here (a merged close starts from where it got to).
+    const growing = this.opening !== null;
+    this.stopGrow();
+    if (growing && !this.merged) this.springs.set({ w: this.width }, { immediate: true });
     this.drag?.abort();
     this.shown = false;
     this.viewKey = null;
     this.engagedInput = null;
+    let finished = false;
     const done = () => {
-      if (this.shown) return;
+      if (finished || this.shown) return;
+      finished = true;
+      const wasClosing = this.closingMerged;
+      this.closingMerged = false;
+      document.documentElement.classList.remove('card-closing');
+      this.inner.style.opacity = '';
+      this.stopFades(this.inner);
       this.el.style.display = 'none';
+      this.unmerge();
       this.clear();
       this.drawn = null;
       this.onMove();
+      // Landed in the pill: the island hands the pill its light back.
+      if (wasClosing) this.onAction('island:sheet-landed', null, this.el);
     };
     if (immediate || reducedMotion()) {
-      this.springs.set({ h: SLIVER, o: 0, s: 0.94, b: 8 }, { immediate: true });
+      this.springs.set({ h: SLIVER, o: 0, s: 0.94, b: 8, m: 0 }, { immediate: true });
       done();
+      return;
+    }
+    if (this.merged) {
+      // The opening played backwards. Opening springs out fast and eases in; a spring back would
+      // ease in too and creep the last pixels into the pill (a drag). So the close follows the
+      // opening's own curve time-reversed: it starts gently, speeds up into the pill and lands
+      // there, in a fixed time. The content shrinks with the shape (placeMerged scales it) and
+      // fades with it; the pill's own content fades in as it lands (island.css, --pill-in).
+      const p = this.pill;
+      this.stopGrow();
+      const w0 = this.springs.get('w');
+      const h0 = this.springs.get('h');
+      this.closingMerged = true;
+      this.aimW = p.w;
+      this.closeFromW = w0;
+      document.documentElement.classList.add('card-closing');
+      document.documentElement.style.setProperty('--pill-in', '0');
+      const start = performance.now();
+      cancelAnimationFrame(this.closeFrame);
+      const step = (now: number) => {
+        if (!this.closingMerged) return;
+        const u = Math.min(1, (now - start) / CLOSE_MS);
+        const q = 1 - morphCurve(1 - u); // the opening reversed: slow start, fast landing
+        this.springs.set({ w: w0 + (p.w - w0) * q, h: h0 + (p.h - h0) * q }, { immediate: true });
+        if (u < 1) this.closeFrame = requestAnimationFrame(step);
+        else done();
+      };
+      this.closeFrame = requestAnimationFrame(step);
       return;
     }
     this.springs.set({ h: SLIVER, o: 0, s: 0.95, b: 6 }, { config: { h: springs.snappy, o: springs.fade, s: springs.snappy, b: springs.fade } });
@@ -363,8 +528,15 @@ export class SheetRenderer {
   private fit(immediate: boolean): void {
     const max = Math.max(160, Math.min(this.area.height * 0.72, 660));
     this.inner.style.maxHeight = `${max}px`;
-    const h = Math.min(max, this.inner.scrollHeight);
-    this.springs.set({ h }, { config: springs.shell, immediate });
+    let h = Math.min(max, this.inner.scrollHeight);
+    // Merged on a side edge: at least as long as the pill it covers, so no end of the pill is left out.
+    if (this.merged && (this.anchor === 'left' || this.anchor === 'right')) h = Math.max(h, this.pill.h);
+    this.fitH = h;
+    if (this.opening) {
+      this.opening.h1 = h;
+      return;
+    }
+    this.springs.set({ h }, { config: this.merged ? springs.morph : springs.shell, immediate });
   }
 
   /**
@@ -379,33 +551,52 @@ export class SheetRenderer {
   }
 
   private place(v = this.springs.values()): void {
-    if (!this.ready) return;
+    if (!this.ready || this.el.style.display === 'none') return;
     const h = Math.max(0, v.h);
     const w = Math.max(0, Math.round(v.w));
     const p = this.pill;
     const { width: W, height: H } = this.area;
     const clampX = (x: number) => Math.max(EDGE, Math.min(W - w - EDGE, x));
     const clampY = (y: number) => Math.max(EDGE, Math.min(H - h - EDGE, y));
+    // Merged (m = 1), the card sits on the pill's outer edge and covers it; apart, it hangs past it.
+    const m = clamp01(v.m);
     let x: number;
     let y: number;
     switch (this.anchor) {
       case 'top':
         x = clampX(p.x + p.w / 2 - w / 2);
-        y = p.y + p.h + GAP;
+        y = p.y + (1 - m) * (p.h + GAP);
         break;
       case 'bottom':
         x = clampX(p.x + p.w / 2 - w / 2);
-        y = p.y - GAP - h;
+        y = p.y + p.h - h - (1 - m) * (p.h + GAP);
         break;
       case 'left':
-        x = p.x + p.w + GAP;
+        x = p.x + (1 - m) * (p.w + GAP);
         y = clampY(p.y + p.h / 2 - h / 2);
         break;
       case 'right':
-        x = p.x - GAP - w;
+        x = p.x + p.w - w - (1 - m) * (p.w + GAP);
         y = clampY(p.y + p.h / 2 - h / 2);
         break;
     }
+    if (this.merged) {
+      this.placeMerged(x, y, w, h, v);
+      return;
+    }
+    this.unmerge();
+    // Text inside the card is snapped to whole pixels relative to the card. While the
+    // width springs, centring would put it on a half pixel every other frame and it
+    // would flick 1px left and right. So the content gets one whole-pixel spot on
+    // screen, moved only when it really travels, and the card is drawn on whole pixels.
+    // Device pixels, not CSS ones: at 125% or 150% scaling a whole CSS pixel is not a whole screen pixel.
+    const dpr = window.devicePixelRatio || 1;
+    const snap = (n: number) => Math.round(n * dpr) / dpr;
+    const ideal = x + (w - this.width) / 2;
+    if (this.innerX === null || Math.abs(ideal - this.innerX) > 0.6) this.innerX = snap(ideal);
+    x = snap(x);
+    y = snap(y);
+    this.inner.style.left = `${this.innerX - x}px`;
     const st = this.el.style;
     st.transform = `translate3d(${x}px, ${y}px, 0) scale(${v.s})`;
     st.width = `${w}px`;
@@ -416,9 +607,142 @@ export class SheetRenderer {
     this.onMove();
   }
 
+  /** Grows a merged card out of the pill to its full size, in a fixed time (the close's mirror). */
+  private grow(w0: number, h0: number): void {
+    cancelAnimationFrame(this.openFrame);
+    this.opening = { start: performance.now(), w0, h0, w1: this.width, h1: this.fitH || h0 };
+    const step = (now: number) => {
+      const o = this.opening;
+      if (!o) return;
+      const u = Math.min(1, (now - o.start) / CLOSE_MS);
+      const q = morphCurve(u); // fast start, eases into place and stops
+      this.springs.set({ w: o.w0 + (o.w1 - o.w0) * q, h: o.h0 + (o.h1 - o.h0) * q }, { immediate: true });
+      if (u < 1) this.openFrame = requestAnimationFrame(step);
+      else this.opening = null;
+    };
+    this.openFrame = requestAnimationFrame(step);
+  }
+
+  private stopGrow(): void {
+    cancelAnimationFrame(this.openFrame);
+    this.opening = null;
+  }
+
+  /**
+   * A merged card (it grew out of the pill). The box holding the content stays at
+   * its final spot on whole screen pixels and never moves while the card grows or
+   * shrinks; only its shape does: the background, the shadow and a clip that hides
+   * whatever is past the shape. Moving the box every frame (and the content back
+   * inside it) re-rounded half-pixel edges each frame, so the cover art flickered 1px.
+   */
+  private placeMerged(vx: number, vy: number, vw: number, vh: number, v: Record<'o', number>): void {
+    const p = this.pill;
+    const { width: W, height: H } = this.area;
+    const fw = this.width;
+    const fh = Math.max(this.fitH, vh);
+    let fx: number;
+    let fy: number;
+    switch (this.anchor) {
+      case 'top':
+        fx = p.x + p.w / 2 - fw / 2;
+        fy = p.y;
+        break;
+      case 'bottom':
+        fx = p.x + p.w / 2 - fw / 2;
+        fy = p.y + p.h - fh;
+        break;
+      case 'left':
+        fx = p.x;
+        fy = p.y + p.h / 2 - fh / 2;
+        break;
+      case 'right':
+        fx = p.x + p.w - fw;
+        fy = p.y + p.h / 2 - fh / 2;
+        break;
+    }
+    fx = Math.max(EDGE, Math.min(W - fw - EDGE, fx));
+    fy = Math.max(EDGE, Math.min(H - fh - EDGE, fy));
+    // Whole device pixels, kept unless the spot really moves (spring noise must not flip the rounding).
+    const dpr = window.devicePixelRatio || 1;
+    const snap = (n: number) => Math.round(n * dpr) / dpr;
+    if (this.boxX === null || Math.abs(fx - this.boxX) > 0.6) this.boxX = snap(fx);
+    if (this.boxY === null || Math.abs(fy - this.boxY) > 0.6) this.boxY = snap(fy);
+    const bx = this.boxX;
+    const by = this.boxY;
+    const lx = vx - bx;
+    const ly = vy - by;
+    const o = String(clamp01(v.o));
+    const st = this.el.style;
+    st.transform = `translate3d(${bx}px, ${by}px, 0)`;
+    st.width = `${fw}px`;
+    st.height = `${fh}px`;
+    st.opacity = o;
+    st.filter = '';
+    st.clipPath = `xywh(${lx.toFixed(2)}px ${ly.toFixed(2)}px ${vw.toFixed(2)}px ${vh.toFixed(2)}px round ${MERGED_RADIUS}px)`;
+    const bg = this.bg.style;
+    bg.left = `${lx}px`;
+    bg.top = `${ly}px`;
+    bg.width = `${vw}px`;
+    bg.height = `${vh}px`;
+    const sh = this.shadow.style;
+    sh.display = '';
+    sh.transform = `translate3d(${vx}px, ${vy}px, 0)`;
+    sh.width = `${vw}px`;
+    sh.height = `${vh}px`;
+    sh.opacity = o;
+    this.inner.style.left = '0px';
+    // Expand/compact: while the shape is smaller than the card, the content scales with it, from
+    // the pill's outer edge, so it grows out of the pill and shrinks back into it (never blank).
+    // At full size there is no transform at all, so the text is crisp and still.
+    const vertical = this.anchor === 'left' || this.anchor === 'right';
+    const k = clamp01(vertical ? vh / Math.max(1, fh) : vw / Math.max(1, fw));
+    const origin = { top: '50% 0', bottom: '50% 100%', left: '0 50%', right: '100% 50%' }[this.anchor];
+    this.inner.style.transformOrigin = origin;
+    this.inner.style.transform = k < 0.999 ? `scale(${k.toFixed(4)})` : '';
+    if (this.closingMerged) {
+      // How far the shrink has got, 0 → 1. The card's text fades over most of it and the pill's
+      // own content fades in over the last part, both locked to the box, not to a clock.
+      const span = Math.max(1, this.closeFromW - this.aimW);
+      const t = clamp01((this.closeFromW - vw) / span);
+      const ease = (a: number, b: number) => {
+        const u = clamp01((t - a) / (b - a));
+        return u * u * (3 - 2 * u);
+      };
+      this.inner.style.opacity = String(1 - ease(0.1, 0.85));
+      document.documentElement.style.setProperty('--pill-in', String(ease(0.55, 1)));
+    }
+    this.mergedStyled = true;
+    this.drawn = { x: vx, y: vy, w: vw, h: vh };
+    this.onMove();
+  }
+
+  /** Ends fades left on content (a closing fade holds its last frame until cancelled). */
+  private stopFades(e: HTMLElement): void {
+    for (const a of e.getAnimations?.() ?? []) a.cancel();
+  }
+
+  /** Back to a plain card: the box is the shape again. */
+  private unmerge(): void {
+    if (!this.mergedStyled) return;
+    this.mergedStyled = false;
+    this.el.style.clipPath = '';
+    const bg = this.bg.style;
+    bg.left = '';
+    bg.top = '';
+    bg.width = '';
+    bg.height = '';
+    this.shadow.style.display = 'none';
+    this.inner.style.transform = '';
+    this.boxX = null;
+    this.boxY = null;
+  }
+
   // ---------------------------------------------------------------- content
 
   private clear(): void {
+    this.innerX = null;
+    this.boxX = null;
+    this.boxY = null;
     this.drag?.abort();
     this.nodes.clear();
     this.inner.replaceChildren();
@@ -432,13 +756,15 @@ export class SheetRenderer {
     old.classList.add('leaving');
     old.style.pointerEvents = 'none';
     const gone = () => old.remove();
-    const anim = springAnimate(old, [{ opacity: 1, filter: 'blur(0px)' }, { opacity: 0, filter: 'blur(5px)' }], springs.fade, { fill: 'forwards' });
+    // A merged card swaps with a plain fade: blurring text that size reads as a wobble.
+    const blur = this.merged ? 0 : 5;
+    const anim = springAnimate(old, [{ opacity: 1, filter: 'blur(0px)' }, { opacity: 0, filter: `blur(${blur}px)` }], springs.fade, { fill: 'forwards' });
     if (anim) anim.finished.then(gone, gone);
     else gone();
     this.inner = make('div', 'sheet-inner');
     this.inner.style.setProperty('--cols', this.width >= 520 ? '4' : '2');
     this.el.append(this.inner);
-    springAnimate(this.inner, [{ opacity: 0, filter: 'blur(5px)' }, { opacity: 1, filter: 'blur(0px)' }], springs.content);
+    springAnimate(this.inner, [{ opacity: 0, filter: `blur(${blur}px)` }, { opacity: 1, filter: 'blur(0px)' }], springs.content);
     this.nodes.clear();
     this.engagedInput = null;
   }
@@ -507,6 +833,10 @@ export class SheetRenderer {
         this.patchTiles(e, b);
         return true;
       }
+      case 'player': {
+        this.fillPlayer(e, b, node.spec.t === 'player' ? node.spec : null);
+        return true;
+      }
       default:
         return false;
     }
@@ -525,6 +855,22 @@ export class SheetRenderer {
     if (b.label) e.append(make('span', 'bl', b.label));
     if (b.tip) e.title = b.tip;
     this.bind(e, b.action, b.arg);
+    return e;
+  }
+
+  /** Same look as the pill's chips (island.css .seg-chip). */
+  private chip(c: SheetChip): HTMLButtonElement {
+    const e = make('button', `seg-chip tone-${c.tone ?? 'default'}${c.label ? '' : ' icon-only'}`);
+    e.type = 'button';
+    if (c.dot) {
+      const d = make('span', `cd tone-${c.dot}${c.pulse ? ' pulse' : ''}`);
+      d.append(make('i', 'ring'), make('i', 'core'));
+      e.append(d);
+    }
+    if (c.icon) e.append(iconEl(c.icon, 'ci'));
+    if (c.label) e.append(make('span', 'cl', c.label));
+    if (c.tip) e.title = c.tip;
+    this.bind(e, c.action, c.arg);
     return e;
   }
 
@@ -565,6 +911,11 @@ export class SheetRenderer {
           const bar = make('div', 'hb');
           for (const x of b.buttons) bar.append(this.button(x));
           e.append(bar);
+        }
+        if (b.chips?.length) {
+          const host = make('div', 'pk');
+          for (const c of b.chips) host.append(this.chip(c));
+          e.append(host);
         }
         return e;
       }
@@ -631,6 +982,8 @@ export class SheetRenderer {
         this.runCountdown(fill, b);
         return e;
       }
+      case 'player':
+        return this.buildPlayer(b);
       case 'tiles': {
         const e = make('div', 'sb sb-tiles');
         const bar = (side: string) => {
@@ -709,6 +1062,85 @@ export class SheetRenderer {
     if (b.pace != null) pace.style.left = `${clamp01(b.pace) * 100}%`;
     if (b.tip) e.title = b.tip;
     else e.removeAttribute('title');
+  }
+
+  private buildPlayer(b: Extract<Block, { t: 'player' }>): HTMLElement {
+    const e = make('div', 'sb sb-player');
+    const top = make('div', 'pt');
+    const meta = make('div', 'pm');
+    meta.append(make('div', 'p1'), make('div', 'p2'));
+    // The pill's own wave, so the speakers paint it too (music.ts paints every .seg-bars).
+    const wave = make('span', 'seg-bars');
+    wave.innerHTML = '<i></i>'.repeat(7);
+    top.append(make('div', 'pa'), meta, wave, make('div', 'pk'));
+    const scrub = make('div', 'ps');
+    const bar = make('div', 'pb');
+    bar.append(make('i', ''));
+    scrub.append(make('span', 'pe'), bar, make('span', 'pr'));
+    bar.addEventListener('click', (ev) => {
+      const n = this.nodes.get(b.key);
+      const spec = n && n.spec.t === 'player' ? n.spec : b;
+      if (!spec.seek) return;
+      ev.stopPropagation();
+      const r = bar.getBoundingClientRect();
+      this.onAction(spec.seek, clamp01((ev.clientX - r.left) / Math.max(1, r.width)), e);
+    });
+    e.append(top, scrub, make('div', 'pc'));
+    this.fillPlayer(e, b, null);
+    return e;
+  }
+
+  private fillPlayer(e: HTMLElement, b: Extract<Block, { t: 'player' }>, prev: Extract<Block, { t: 'player' }> | null): void {
+    const art = e.querySelector<HTMLElement>('.pa')!;
+    if (!prev || prev.art !== b.art) {
+      art.textContent = '';
+      if (b.art) {
+        const img = make('img', '');
+        img.alt = '';
+        img.decoding = 'async';
+        img.src = b.art;
+        art.append(img);
+      } else art.innerHTML = icon('music');
+    }
+    e.querySelector('.p1')!.textContent = b.title;
+    e.querySelector('.p2')!.textContent = b.artist;
+    const wave = e.querySelector<HTMLElement>('.seg-bars')!;
+    wave.classList.toggle('active', b.playing);
+    wave.style.color = b.color ?? '';
+
+    const scrub = e.querySelector<HTMLElement>('.ps')!;
+    const timed = b.duration != null && b.duration > 0 && b.position != null;
+    scrub.style.display = timed ? '' : 'none';
+    if (timed) {
+      const pos = Math.min(b.position!, b.duration!);
+      e.querySelector('.pe')!.textContent = clock(pos * 1000);
+      e.querySelector('.pr')!.textContent = `−${clock((b.duration! - pos) * 1000)}`;
+      const fill = e.querySelector<HTMLElement>('.pb i')!;
+      // Glide between the once-a-second updates; jump when it goes back (new song, a seek).
+      const back = prev?.position != null && b.position! < prev.position;
+      fill.style.transition = back || !b.playing ? 'none' : '';
+      fill.style.transform = `scaleX(${clamp01(pos / b.duration!)})`;
+      e.querySelector<HTMLElement>('.pb')!.classList.toggle('seekable', Boolean(b.seek));
+    }
+
+    const chips = b.chips ?? [];
+    if (!prev || JSON.stringify(prev.chips ?? []) !== JSON.stringify(chips)) {
+      const host = e.querySelector<HTMLElement>('.pk')!;
+      host.textContent = '';
+      for (const c of chips) host.append(this.chip(c));
+      host.style.display = chips.length ? '' : 'none';
+    }
+
+    if (!prev || JSON.stringify(prev.buttons) !== JSON.stringify(b.buttons)) {
+      const ctl = e.querySelector<HTMLElement>('.pc')!;
+      ctl.textContent = '';
+      for (const x of b.buttons) {
+        const btn = this.button(x);
+        btn.classList.add(`k-${x.key}`);
+        ctl.append(btn);
+      }
+      ctl.style.display = b.buttons.length ? '' : 'none';
+    }
   }
 
   private runCountdown(fill: HTMLElement, b: Extract<Block, { t: 'countdown' }>): void {

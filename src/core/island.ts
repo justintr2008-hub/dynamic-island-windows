@@ -22,7 +22,7 @@ import { PillRenderer } from './renderer';
 import { fitSegments, fitVertical, signature, type Placed, type Seg } from './segments';
 import { accentColor, migrate, TILE_SIZES, type Settings, type TileSize } from './settings';
 import { availableHere, platform } from './platform';
-import { mapActions, SheetRenderer, type SheetView, type Tile } from './sheet';
+import { mapActions, SheetRenderer, type Block, type SheetChip, type SheetView, type Tile } from './sheet';
 import { springs } from './spring';
 import { clip, timeOfDay } from './format';
 
@@ -109,6 +109,8 @@ export class Island {
   /** What the bot shows, from what every activity reports (src/core/pet.ts). */
   private readonly brain = new PetBrain();
   private readonly cardGlow: BorderGlow;
+  /** The pill's light, moved onto a card that grew out of the pill (same radius as .sheet.merged). */
+  private readonly mergedGlow: BorderGlow;
   /** Duplicate mode: how many copies of the pill run on other screens, and the last frame sent to them. */
   private mirrorCount = 0;
   private mirrorKey = '';
@@ -126,7 +128,10 @@ export class Island {
       (action, arg, el) => this.handleAction(action, arg, el),
       () => {
         const card = this.sheet?.rect;
-        if (card) this.cardGlow?.place(card);
+        if (card) {
+          this.cardGlow?.place(card);
+          this.mergedGlow?.place(card);
+        }
         this.publishHit(this.renderer.rect, false);
       },
     );
@@ -135,6 +140,7 @@ export class Island {
     this.bubble = new BubbleView(stage, { interactive: true, onClick: () => this.handleAction('island:bot', null, this.bubble.el) });
     this.chat = new ChatBar(stage, (action, arg) => this.chatAction(action, arg), () => this.publishHit(this.renderer.rect, true));
     this.cardGlow = new BorderGlow(stage, 24);
+    this.mergedGlow = new BorderGlow(stage, 34);
     this.renderer.onFrame((r) => {
       this.sheet.follow(r);
       this.pillGlow.place(r);
@@ -452,7 +458,9 @@ export class Island {
     let level: Level = primary ? 'compact' : 'idle';
     const surf = primary ? this.surfaces.filter((x) => x.id === primary).sort((a, b) => b.at - a.at)[0] : undefined;
     if (surf) level = atLeast(level, surf.level);
-    if (this.hover && s.hoverExpand && primary && !this.open) level = atLeast(level, 'expanded');
+    // Under a merged card the pill rests: it is hidden, and when the card shrinks back into it
+    // there is then no hover layout to swap out for a split second.
+    if (this.hover && s.hoverExpand && primary && !this.open && !this.sheet.isMerged) level = atLeast(level, 'expanded');
     if (this.open || this.view !== 'main') level = 'maximum';
     // Urgency raises the pill until a tap outside dismisses it; a new urgent key raises it again.
     const urgentKeys = new Set<string>();
@@ -728,12 +736,42 @@ export class Island {
    * open, else a surfaced event's details, else whatever the pointer rests on.
    */
   private composeSheet(choice: Picked | null, statuses: Map<string, ActivityStatus>, now: number, orient: Orientation, pillW: number, immediate: boolean): void {
-    const picked = choice ? this.pickSheet(choice, statuses, now, orient, pillW) : null;
+    let picked = choice ? this.pickSheet(choice, statuses, now, orient, pillW) : null;
+    if (picked?.view.merge && choice) picked = { ...picked, view: { ...picked.view, blocks: this.withChips(picked.view.blocks, picked.owner, choice, statuses, now) } };
     // A different card: whatever was typed into the old one is gone, and so is the keyboard.
     if (this.sheetEngaged && (!picked || picked.view.key !== this.sheet.key)) this.sheetEngaged = false;
     this.sheetOwner = picked?.owner ?? null;
     const width = picked ? this.sheetWidth(picked.view, orient, pillW) : 0;
+    const wasMerged = this.sheet.isMerged;
     this.sheet.show(picked?.view ?? null, { anchor: this.settings.island.anchor, area: this.area, width, immediate });
+    // The pill's size depends on whether a merged card covers it: compose once more when that changes.
+    if (this.sheet.isMerged !== wasMerged) this.schedule();
+    // A merged card covers the pill: its own content steps aside so the two read as one shape.
+    document.documentElement.classList.toggle('card-merged', picked?.view.merge === true);
+  }
+
+  /**
+   * A merged card covers the pill, chips and all: it carries them itself, so
+   * the other activities and "+N" stay one click away.
+   */
+  private withChips(blocks: Block[], owner: string, choice: Picked, statuses: Map<string, ActivityStatus>, now: number): Block[] {
+    if (!this.settings.island.showSecondary) return blocks;
+    // Everything but the card's own activity: pointing at a chip shows that chip's card,
+    // and then the pill's own activity is one of the others.
+    const others = choice.visible.filter((id) => id !== owner);
+    const MAX = 2;
+    const chips: SheetChip[] = [];
+    for (const seg of this.secondarySegments(others.slice(0, MAX), statuses, 'expanded', now, true)) {
+      if (seg.t !== 'chip') continue;
+      chips.push({ key: seg.key, icon: seg.icon, dot: seg.dot, pulse: seg.pulse, tone: seg.tone, action: seg.action ?? 'island:select', arg: seg.arg, tip: seg.tip });
+    }
+    if (others.length > MAX) chips.push({ key: 'island/more', icon: 'more', label: `+${others.length - MAX}`, action: 'island:overflow', tip: 'More activities' });
+    if (!chips.length) return blocks;
+    // The card's top row takes them: a player's, else its heading.
+    const at = blocks.findIndex((b) => b.t === 'player');
+    const i = at >= 0 ? at : blocks.findIndex((b) => b.t === 'head');
+    if (i < 0) return blocks;
+    return blocks.map((b, j) => (j === i && (b.t === 'player' || b.t === 'head') ? { ...b, chips } : b));
   }
 
   private pickSheet(choice: Picked, statuses: Map<string, ActivityStatus>, now: number, orient: Orientation, pillW: number): { owner: string; view: SheetView } | null {
@@ -958,6 +996,9 @@ export class Island {
   private sheetWidth(view: SheetView | null, orient: Orientation, pillW: number): number {
     const W = this.area.width;
     if (view?.width) return Math.min(view.width, W - 24);
+    // A card that grew out of the pill keeps one width: the pill under it still resizes
+    // (hover, a ticking "2m"), and following it would nudge the text a pixel each time.
+    if (view?.merge) return Math.min(Math.max(orient === 'vertical' ? 360 : 400, orient === 'vertical' ? 0 : pillW), W - 32);
     if (orient === 'vertical') return Math.min(W - 120, view?.wide ? 440 : 380);
     const want = view?.wide ? Math.max(460, Math.min(pillW, 760)) : Math.max(340, Math.min(pillW, 560));
     return Math.min(want, W - 32);
@@ -973,12 +1014,18 @@ export class Island {
     if (speed === 'off') {
       this.pillGlow.set(null);
       this.cardGlow.set(null);
+      this.mergedGlow.set(null);
       return;
     }
     this.pillGlow.setSpeed(speed);
     this.cardGlow.setSpeed(speed);
-    this.pillGlow.set(beamSpec(want));
-    this.cardGlow.set(cardUrgent ? { tone: want?.tone ?? 'accent', motion: 'orbit' } : null);
+    this.mergedGlow.setSpeed(speed);
+    // A merged card covers the pill: the light runs round the card's edge, not across its text.
+    // Showing or still shrinking back: the light runs round the card until it lands.
+    const merged = this.sheet.coversPill;
+    this.pillGlow.set(merged ? null : beamSpec(want));
+    this.mergedGlow.set(merged ? (cardUrgent ? { tone: want?.tone ?? 'accent', motion: 'orbit' } : beamSpec(want)) : null);
+    this.cardGlow.set(cardUrgent && !merged ? { tone: want?.tone ?? 'accent', motion: 'orbit' } : null);
   }
 
   /**
@@ -1059,9 +1106,12 @@ export class Island {
       () => {
         if (this.hover === on) return;
         this.hover = on;
+        // The next hover starts from what the pointer is on then, not from the chip it last crossed.
+        if (!on) this.hoverKey = null;
         this.schedule();
       },
-      on ? 80 : 280,
+      // Off quickly, but not on a one-frame slip past the edge.
+      on ? 80 : 40,
     );
   }
 
@@ -1146,6 +1196,8 @@ export class Island {
       case 'island:menu':
         this.view = this.view === 'menu' ? 'main' : 'menu';
         break;
+      case 'island:sheet-landed':
+        break;
       case 'island:hover':
       case 'island:sheet-hover':
         this.setHover(Boolean(arg));
@@ -1181,6 +1233,9 @@ export class Island {
       case 'island:select':
         this.selected = String(arg);
         this.view = 'main';
+        // The card follows the pick, not the segment the pointer last crossed (a merged card hides the
+        // pill's segments), even when an urgent activity keeps the pill.
+        this.hoverKey = `chip/${String(arg)}`;
         break;
       case 'island:overflow':
         this.view = 'overflow';

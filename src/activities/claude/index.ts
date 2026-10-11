@@ -1296,7 +1296,9 @@ export class ClaudeActivity extends BaseActivity {
     if (hiddenCount) {
       blocks.push({ t: 'buttons', key: 'hidden', align: 'start', items: [{ key: 'unhide', label: `Show hidden (${hiddenCount})`, icon: 'eye', action: 'unhide-all', style: 'ghost' }] });
     }
-    return { key: 'hover', blocks };
+    // It grows out of the pill and covers it, so it carries its own name.
+    blocks.unshift({ t: 'head', key: 'head', icon: 'claude', tone: 'claude', title: 'Claude', sub: 'Limits and sessions' });
+    return { key: 'hover', blocks, merge: true };
   }
 
   /** Claude's cell in the open island: limits in the label, the chats as rows. */

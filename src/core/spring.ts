@@ -19,6 +19,8 @@ export const springs = {
   snappy: { response: 0.26, damping: 0.92 },
   bouncy: { response: 0.42, damping: 0.6 },
   gentle: { response: 0.65, damping: 1 },
+  /** A card growing out of the pill: quick, and it lands without a bounce. */
+  morph: { response: 0.4, damping: 1 },
   fade: { response: 0.28, damping: 1 },
   /** Following a finger or cursor. */
   drag: { response: 0.14, damping: 0.95 },

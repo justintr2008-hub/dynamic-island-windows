@@ -467,7 +467,36 @@ html.reduce .bubble-costume * { animation: none !important; }
   top: 0;
   width: 0;
   height: 0;
+  transition: opacity 0.18s ease;
 }
+/* A merged card (sheet.ts, merge) grew out of the pill and covers it. */
+html.card-merged .pill-content { opacity: 0; }
+/* The whole pill steps aside (its ends would show past the card's round corners). No fade back:
+   it is just there under the closing card, which shrinks into it. */
+.pill { transition: none; }
+html.card-merged .pill { opacity: 0; transition: none; pointer-events: none; }
+/* Closing, the reverse of opening: the card's content shrinks and fades out (sheet.ts hide());
+   the pill's resting content, drawn on top, fades in late, as the shape lands, so the two barely
+   overlap. The card draws the shape until it lands, then the pill's own background takes over. */
+html.card-closing .pill { z-index: 3; box-shadow: none; }
+html.card-closing .pill-bg { opacity: 0; }
+html.card-closing .pill-content { opacity: var(--pill-in, 1); transition: none; }
+html.card-merged .bubble,
+html.card-merged .chat { opacity: 0; pointer-events: none; }
+/* A merged card's box stays still and is clipped to the growing shape (sheet.ts, placeMerged):
+   the background and the shadow follow the shape instead of the box. */
+.sheet.merged { border-radius: 34px; box-shadow: none; overflow: visible; }
+.sheet.merged .sheet-bg { inset: auto; }
+.sheet-shadow {
+  position: absolute;
+  left: 0;
+  top: 0;
+  pointer-events: none;
+  border-radius: 34px;
+  box-shadow: 0 18px 44px -12px rgba(0, 0, 0, 0.7), 0 3px 10px rgba(0, 0, 0, 0.34);
+  will-change: transform, width, height, opacity;
+}
+.sheet.merged .sheet-inner { padding: 18px 18px 14px; }
 
 /* ------------------------------------------------------------------ segments */
 
@@ -1007,6 +1036,35 @@ html.reduce .bubble-costume * { animation: none !important; }
 .sb-meter.tone-bad { color: var(--bad); }
 .sb-meter.tone-warn { color: var(--warn); }
 .sb-meter.tone-good { color: var(--good); }
+
+/* now playing: the iPhone's expanded music island */
+.sb-player { display: flex; flex-direction: column; gap: 14px; padding: 4px 6px 2px; }
+.sb-player .pt { display: flex; align-items: center; gap: 14px; min-width: 0; }
+.sb-player .pa { width: 58px; height: 58px; flex: none; border-radius: 13px; overflow: hidden; background: rgba(var(--ink), 0.08); display: grid; place-items: center; color: var(--muted); }
+.sb-player .pa img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.sb-player .pa .ico { width: 50%; height: 50%; }
+.sb-player .pm { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.sb-player .p1 { font: 600 16px/1.2 var(--font); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sb-player .p2 { font: 500 14.5px/1.2 var(--font); color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sb-player .seg-bars { flex: none; align-self: flex-start; margin-top: 6px; height: 16px; }
+/* The pill's chips, carried onto the card that covers it */
+.sb-player .pk { flex: none; align-self: flex-start; display: flex; gap: 5px; margin-top: 1px; }
+.sb-head .pk { flex: none; display: flex; gap: 5px; }
+.pk .seg-chip.icon-only { padding: 0 8px; }
+.pk .ci { width: 14px; height: 14px; flex: none; opacity: 0.9; }
+.pk .ci .ico { width: 100%; height: 100%; display: block; }
+.sb-player .ps { display: flex; align-items: center; gap: 10px; font: 500 11.5px/1 var(--font); color: var(--muted); font-variant-numeric: tabular-nums; }
+.sb-player .pe, .sb-player .pr { flex: none; min-width: 34px; }
+.sb-player .pr { text-align: right; }
+.sb-player .pb { position: relative; flex: 1; height: 6px; border-radius: 3px; background: rgba(var(--ink), 0.16); overflow: hidden; }
+.sb-player .pb.seekable { cursor: pointer; }
+.sb-player .pb.seekable:hover { height: 8px; }
+.sb-player .pb i { position: absolute; inset: 0; background: rgba(var(--ink), 0.62); transform-origin: 0 50%; transition: transform 1s linear; }
+.sb-player .pc { display: flex; justify-content: center; align-items: center; gap: 30px; }
+.sb-player .pc .sbtn { width: 46px; height: 46px; border-radius: 23px; padding: 0; background: transparent; color: var(--fg); }
+.sb-player .pc .sbtn:hover { background: rgba(var(--ink), 0.1); }
+.sb-player .pc .sbtn .bi { width: 26px; height: 26px; }
+.sb-player .pc .sbtn.k-toggle .bi { width: 32px; height: 32px; }
 
 /* rows (sessions, lists) */
 .sb-rows { display: flex; flex-direction: column; gap: 2px; }

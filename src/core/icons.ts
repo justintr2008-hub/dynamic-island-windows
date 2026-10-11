@@ -9,6 +9,11 @@ const P: Record<string, string> = {
   pause: '<path d="M8 5.5v13M16 5.5v13" stroke-width="3.2"/>',
   next: '<path d="M6 6l9 6-9 6z" fill="currentColor"/><path d="M18 6v12" stroke-width="2.4"/>',
   prev: '<path d="M18 6l-9 6 9 6z" fill="currentColor"/><path d="M6 6v12" stroke-width="2.4"/>',
+  // The now-playing card's big transport: solid, like the iPhone's.
+  rewind: '<path d="M11.5 6.5L3 12l8.5 5.5zM21 6.5L12.5 12l8.5 5.5z" fill="currentColor" stroke-width="1.4"/>',
+  forward: '<path d="M12.5 6.5L21 12l-8.5 5.5zM3 6.5l8.5 5.5L3 17.5z" fill="currentColor" stroke-width="1.4"/>',
+  'pause-solid': '<rect x="6" y="4.5" width="4.2" height="15" rx="1.3" fill="currentColor" stroke="none"/><rect x="13.8" y="4.5" width="4.2" height="15" rx="1.3" fill="currentColor" stroke="none"/>',
+  'play-solid': '<path d="M7 4.8v14.4L19.5 12z" fill="currentColor" stroke-width="1.4"/>',
   battery: '<rect x="2.5" y="7.5" width="17" height="9" rx="2.2"/><path d="M21.5 10.5v3"/>',
   bolt: '<path d="M13 2.5L5 13.5h6l-1 8 8-11h-6z" fill="currentColor" stroke-linejoin="round"/>',
   plug: '<path d="M9 2.5v5M15 2.5v5M6.5 7.5h11v3.5a5.5 5.5 0 01-11 0zM12 16.5v5"/>',
