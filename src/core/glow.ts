@@ -109,8 +109,8 @@ export class BorderGlow {
     this.el.style.setProperty('--d', `${Math.ceil(Math.hypot(w, h)) + 8}px`);
   }
 
-  /** Shows `spec` (null fades the glow out). The same spec again changes nothing. */
-  set(spec: GlowSpec | null): void {
+  /** Shows `spec` (null fades the glow out, or cuts it at once with `instant`). The same spec again changes nothing. */
+  set(spec: GlowSpec | null, instant = false): void {
     const prev = this.spec;
     if (prev && spec && prev.tone === spec.tone && prev.motion === spec.motion && prev.fast === spec.fast) {
       if (spec.motion === 'progress' && spec.value !== prev.value) this.drawProgress(spec.value ?? 0);
@@ -122,6 +122,11 @@ export class BorderGlow {
     clearTimeout(this.hideTimer);
     if (!spec) {
       this.el.classList.remove('on');
+      if (instant) {
+        this.el.dataset.motion = '';
+        this.el.style.display = 'none';
+        return;
+      }
       // Out of sight it leaves the page entirely: nothing to animate, nothing to blend.
       this.hideTimer = setTimeout(() => {
         if (this.spec) return;

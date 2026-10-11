@@ -14,7 +14,7 @@ import { SpringSet, reducedMotion } from './animator';
 import { clock } from './format';
 import { icon } from './icons';
 import type { Anchor, Area, Rect } from './layout';
-import { springAnimate } from './renderer';
+import { springAnimate, wheelDelta } from './renderer';
 import type { Tone } from './segments';
 import { springs } from './spring';
 
@@ -311,8 +311,11 @@ export class SheetRenderer {
       }
       const target = (e.target as HTMLElement).closest<HTMLElement>('[data-action]');
       if (!target || !this.el.contains(target)) {
-        // Merged, the card is the pill: a click on it does what a click on the pill does.
-        if (this.merged) this.onAction('island:tap', null, this.el);
+        // Merged, the card is the pill: a click on it does what a click on the pill does
+        // (not one in its reply box, or one that ends selecting its text).
+        const typing = (e.target as HTMLElement).closest('.sb-input');
+        const selecting = !!window.getSelection()?.toString();
+        if (this.merged && !typing && !selecting) this.onAction('island:tap', null, this.el);
         return;
       }
       e.stopPropagation();
@@ -334,7 +337,7 @@ export class SheetRenderer {
         if (list.scrollHeight > list.clientHeight + 1) return;
         // Scrolling picks another activity: the card follows it, not the segment last pointed at.
         this.onAction('island:hover-key', null, this.el);
-        this.onAction('island:wheel', Math.sign(e.deltaY || e.deltaX), this.el);
+        this.onAction('island:wheel', wheelDelta(e), this.el);
       },
       { passive: true },
     );

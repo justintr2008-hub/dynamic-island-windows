@@ -481,7 +481,7 @@ html.card-merged .pill { opacity: 0; transition: none; pointer-events: none; }
 html.card-closing .pill { z-index: 3; box-shadow: none; }
 html.card-closing .pill-bg { opacity: 0; }
 html.card-closing .pill-content { opacity: var(--pill-in, 1); transition: none; }
-html.card-merged .bubble,
+html.card-merged .bubble:not(.sb),
 html.card-merged .chat { opacity: 0; pointer-events: none; }
 /* A merged card's box stays still and is clipped to the growing shape (sheet.ts, placeMerged):
    the background and the shadow follow the shape instead of the box. */

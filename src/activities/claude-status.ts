@@ -201,8 +201,8 @@ export class ClaudeStatusActivity extends BaseActivity {
       const p = this.rows[i].progress;
       if (p) blocks.push({ t: 'meter', key: `m:${row.key}`, label: p.method, value: p.value, text: p.text, tone: 'claude' });
     });
-    // Pointing at it: the card grows out of the pill instead of hanging under it.
-    return { key: 'claudeStatus', blocks, merge: env.reason === 'hover' };
+    // Pointing at it, or a chat finishing: the card grows out of the pill instead of hanging under it.
+    return { key: 'claudeStatus', blocks, merge: env.reason === 'hover' || env.reason === 'surfaced' };
   }
 
   tile(env: SheetEnv): Tile | null {

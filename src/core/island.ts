@@ -45,6 +45,11 @@ const GRID_ROWS = 4;
 const GRID_MIN_W = GRID_COLS * 90 + GRID_GAP * (GRID_COLS - 1) + GRID_PAD * 2;
 const atLeast = (a: Level, b: Level): Level => (levelIdx(a) >= levelIdx(b) ? a : b);
 
+/** How far one scroll gesture has to go before it switches activity, in px (a wheel notch is ~100). */
+const WHEEL_PX = 50;
+/** How long the wheel must be still before the next scroll can switch again. */
+const WHEEL_QUIET_MS = 200;
+
 export class Island {
   settings!: Settings;
   private area: Area = { width: 1280, height: 720 };
@@ -98,6 +103,10 @@ export class Island {
   private gridDrag: { key: string; snap: GridPages; dims: Map<string, { w: number; h: number }>; size: { w: number; h: number }; preview: GridPages | null } | null = null;
   /** Segment key under the pointer: tells whose card a hover asks for. */
   private hoverKey: string | null = null;
+  /** The scroll gesture in progress (wheelStep): when it last moved, how far, and whether it switched. */
+  private wheelAt = 0;
+  private wheelSum = 0;
+  private wheelSpent = false;
   /** Light on the pill's edge and on an urgent card's, in the tone of whatever is happening. */
   private readonly pillGlow: BorderGlow;
   /** The bot in its bubble beside the pill. */
@@ -457,7 +466,8 @@ export class Island {
     // Level: resting compact, raised by events, hover, the user, or urgency.
     let level: Level = primary ? 'compact' : 'idle';
     const surf = primary ? this.surfaces.filter((x) => x.id === primary).sort((a, b) => b.at - a.at)[0] : undefined;
-    if (surf) level = atLeast(level, surf.level);
+    // A merged card covers the pill: it rests under it, as it does under the hover card.
+    if (surf && !this.sheet.isMerged) level = atLeast(level, surf.level);
     // Under a merged card the pill rests: it is hidden, and when the card shrinks back into it
     // there is then no hover layout to swap out for a split second.
     if (this.hover && s.hoverExpand && primary && !this.open && !this.sheet.isMerged) level = atLeast(level, 'expanded');
@@ -1023,7 +1033,8 @@ export class Island {
     // A merged card covers the pill: the light runs round the card's edge, not across its text.
     // Showing or still shrinking back: the light runs round the card until it lands.
     const merged = this.sheet.coversPill;
-    this.pillGlow.set(merged ? null : beamSpec(want));
+    // Cut at once: fading, the pill's ring would show through the card as it grows.
+    this.pillGlow.set(merged ? null : beamSpec(want), merged);
     this.mergedGlow.set(merged ? (cardUrgent ? { tone: want?.tone ?? 'accent', motion: 'orbit' } : beamSpec(want)) : null);
     this.cardGlow.set(cardUrgent && !merged ? { tone: want?.tone ?? 'accent', motion: 'orbit' } : null);
   }
@@ -1228,7 +1239,7 @@ export class Island {
         this.gridAction(action, arg);
         break;
       case 'island:wheel':
-        this.cycle(Number(arg) || 1);
+        if (!this.wheelStep(Number(arg) || 0)) return;
         break;
       case 'island:select':
         this.selected = String(arg);
@@ -1322,6 +1333,30 @@ export class Island {
         if (this.settings.general.notifications) void native.notify('Quiet is on in Island', r.reason);
       }
     });
+  }
+
+  /**
+   * One scroll gesture moves one activity. A touchpad or a smooth wheel sends dozens of
+   * small events per flick; they add up until the gesture is clearly meant (WHEEL_PX),
+   * switch once, and then the rest of that gesture, inertia included, is ignored until
+   * the wheel has been still for WHEEL_QUIET_MS. True when it switched.
+   */
+  private wheelStep(delta: number): boolean {
+    const now = performance.now();
+    const quiet = now - this.wheelAt > WHEEL_QUIET_MS;
+    this.wheelAt = now;
+    if (quiet) {
+      this.wheelSum = 0;
+      this.wheelSpent = false;
+    }
+    if (this.wheelSpent || !delta) return false;
+    // Turning back mid-gesture starts the count again.
+    if (Math.sign(delta) !== Math.sign(this.wheelSum)) this.wheelSum = 0;
+    this.wheelSum += delta;
+    if (Math.abs(this.wheelSum) < WHEEL_PX) return false;
+    this.wheelSpent = true;
+    this.cycle(Math.sign(this.wheelSum));
+    return true;
   }
 
   private cycle(dir: number): void {

@@ -1055,10 +1055,10 @@ export class ClaudeActivity extends BaseActivity {
       return needs ? this.noteSheet(needs.id) : null;
     }
     if (env.reason === 'surfaced') {
+      // Like the hover card, it grows out of the pill instead of hanging under it.
       const key = env.surfaced ?? '';
-      if (key.startsWith('done:')) return this.looking.has(key.slice(5)) ? null : this.finishedSheet(key.slice(5));
-      if (key.startsWith('note:')) return this.noteSheet(key.slice(5));
-      return null;
+      const view = key.startsWith('done:') ? (this.looking.has(key.slice(5)) ? null : this.finishedSheet(key.slice(5))) : key.startsWith('note:') ? this.noteSheet(key.slice(5)) : null;
+      return view && { ...view, merge: true };
     }
     if (env.reason === 'hover') return this.hoverSheet(env);
     return null;
