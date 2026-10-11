@@ -2,7 +2,7 @@
 
 A spring-animated pill at the edge of your Windows screen that shows what is happening right now: Claude Code sessions (with Allow/Deny and Continue Session right in the pill), music, downloads, timers, screenshots, the clipboard, your mic and camera, and system events.
 
-**[Download Island.exe](https://github.com/cutsandedges21/windows-dynamic-island/releases/latest/download/Island.exe)** (always the newest version)
+**[Download Island.exe](https://github.com/justintr2008-hub/dynamic-island-windows/releases/latest/download/Island.exe)** (always the newest version)
 
 ## Run it
 
