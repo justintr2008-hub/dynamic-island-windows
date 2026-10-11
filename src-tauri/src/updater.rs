@@ -14,7 +14,8 @@ use serde::Deserialize;
 use tauri::{AppHandle, Emitter};
 
 const REPO: &str = "justintr2008-hub/dynamic-island-windows";
-const ASSET: &str = "Island.exe";
+/// This repo's releases name the exe apart from the original Island.exe.
+const ASSET: &str = "Dynamic-Island.exe";
 /// Where the running exe goes while its replacement moves in.
 const OLD: &str = "Island.old.exe";
 /// After start, so the check never competes with the island coming up.
@@ -221,7 +222,7 @@ mod tests {
     use super::*;
 
     fn rel(tag: &str, draft: bool, with_exe: bool) -> Release {
-        let assets = if with_exe { vec![Asset { name: "Island.exe".into(), size: 1, browser_download_url: String::new() }] } else { vec![] };
+        let assets = if with_exe { vec![Asset { name: ASSET.into(), size: 1, browser_download_url: String::new() }] } else { vec![] };
         Release { tag_name: tag.into(), draft, assets }
     }
 
