@@ -74,10 +74,16 @@ html[data-pill='matte-black'] :is(.pill-bg, .sheet-bg, .bubble-bg, .chat-bar, .c
 html[data-pill='matte-black'] :is(.pill, .sheet) { text-shadow: 0 1px 2px rgba(0, 0, 0, 0.4); }
 /* glass, as on iOS: nearly clear, its rim catching the light at the top left and throwing
    it back at the bottom right. No lens bend at the edges: this page cannot see the desktop. */
+/* --glass is the Clear ↔ Tinted setting, 0 to 1. Up to the default (0.16) it only sets the
+   faint smoke the glass always had; past it a frosted grey fills in, so less of the desktop
+   shows through without the glass going black (this page cannot blur what is behind it). */
 html[data-pill='glass'] {
+  --glass: 0.16;
   --pill:
     linear-gradient(180deg, rgba(255, 255, 255, 0.16), rgba(255, 255, 255, 0.03) 50%, rgba(255, 255, 255, 0.07)),
-    rgba(10, 12, 16, 0.18);
+    /* a colour can only be the last layer, so the frost is a flat gradient */
+    linear-gradient(rgb(60 62 68 / calc(max(0, var(--glass) - 0.16) / 0.84)) 0 0),
+    rgb(10 12 16 / calc(0.06 + min(var(--glass), 0.16) * 0.75));
 }
 html[data-pill='glass'] .pill { box-shadow: 0 12px 32px -14px rgba(0, 0, 0, 0.45), 0 2px 8px rgba(0, 0, 0, 0.14); }
 html[data-pill='glass'] .sheet { box-shadow: 0 18px 40px -16px rgba(0, 0, 0, 0.45), 0 2px 8px rgba(0, 0, 0, 0.14); }

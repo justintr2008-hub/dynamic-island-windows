@@ -692,6 +692,13 @@ function settingsPage(): HTMLElement {
   const accents = h('div', { class: 'swatches' }, Object.entries(ACCENTS).map(([name, color]) =>
     h('button', { class: `swatch${i.accent === name ? ' on' : ''}`, title: name, style: `--c:${color}`, onclick: () => { i.accent = name; save(true); render(); } }),
   ));
+  // Clear ↔ Tinted, like iOS Liquid Glass; the island follows while dragging.
+  const glassRange = h('input', { type: 'range', min: 0, max: 100, value: String(i.glass) });
+  glassRange.addEventListener('input', () => {
+    i.glass = Number(glassRange.value);
+    save();
+  });
+  const glassSlider = h('div', { class: 'glass-slider' }, [h('span', { class: 'muted', text: 'Clear' }), glassRange, h('span', { class: 'muted', text: 'Tinted' })]);
   const edge = h('input', { type: 'range', min: 0, max: 40, value: String(i.edge) });
   edge.addEventListener('input', () => {
     i.edge = Number(edge.value);
@@ -733,6 +740,7 @@ function settingsPage(): HTMLElement {
     h('div', { class: 'page-head' }, [h('h1', { text: 'Settings' }), h('p', { text: 'How Island looks and behaves everywhere.' })]),
     section('Appearance', [
       row('Pill colour', 'The whole island, card included.', segmented(i.color, [['black', 'Black'], ['white', 'White'], ['matte-white', 'Matte white'], ['matte-black', 'Matte black'], ['glass', 'Glass']], (v) => { i.color = v; save(true); render(); })),
+      ...(i.color === 'glass' ? [row('Glass', 'Clear is more see-through; tinted lets less of what is behind show through.', glassSlider)] : []),
       row('Accent', null, accents),
       row('Bot', 'A little bot beside the pill, in your accent colour. It reacts to what happens; click it to talk to it.', toggle(i.bot, (v) => { i.bot = v; save(true); render(); })),
       row('Size', 'Pill height and text size.', segmented(i.size, [['small', 'Small'], ['medium', 'Medium'], ['large', 'Large']], (v) => { i.size = v; save(true); render(); })),

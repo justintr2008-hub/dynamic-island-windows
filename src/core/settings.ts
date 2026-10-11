@@ -32,6 +32,16 @@ export interface GridLayout {
 
 export type PillColor = 'black' | 'white' | 'matte-white' | 'matte-black' | 'glass';
 
+/**
+ * The glass slider (0–100) as the island's --glass (0–1). Not a straight line: the middle of
+ * the slider is GLASS_MID, a frosted glass, so the frosted end gets half the slider.
+ */
+export function glassTint(glass: number): number {
+  const v = Math.max(0, Math.min(100, glass));
+  return v <= 50 ? (v / 50) * GLASS_MID : GLASS_MID + ((v - 50) / 50) * (1 - GLASS_MID);
+}
+const GLASS_MID = 0.736;
+
 export const SETTINGS_VERSION = 5;
 
 export interface Settings {
@@ -54,6 +64,8 @@ export interface Settings {
     accent: string;
     /** The pill's own colour, and the card's under it. */
     color: PillColor;
+    /** Glass only, like iOS Liquid Glass: 0 is clear, 100 is tinted (darker, more contrast). */
+    glass: number;
     reduceMotion: 'system' | 'on' | 'off';
     /** How fast the border glow moves, or off. */
     glow: 'off' | 'slow' | 'medium' | 'fast';
@@ -138,6 +150,7 @@ export function defaultSettings(): Settings {
       showSecondary: true,
       accent: 'sky',
       color: 'black',
+      glass: 11,
       reduceMotion: 'system',
       glow: 'medium',
       hoverCard: 'pointer',
@@ -189,6 +202,8 @@ export function migrate(saved: unknown): Settings {
   const renamed: Record<string, PillColor> = { silver: 'matte-white', blur: 'matte-black' };
   out.island.color = renamed[out.island.color] ?? out.island.color;
   if (!['black', 'white', 'matte-white', 'matte-black', 'glass'].includes(out.island.color)) out.island.color = 'black';
+  const glass = Number(out.island.glass);
+  out.island.glass = Number.isFinite(glass) ? Math.max(0, Math.min(100, glass)) : 11;
 
   // Activity configs: merge each known one; options keep any extra saved keys.
   const savedActs = isObj(saved.activities) ? saved.activities : {};

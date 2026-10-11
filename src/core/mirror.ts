@@ -9,7 +9,7 @@ import { bubbleRect, pillRect, tuckedRect, type Anchor, type Area, type Orientat
 import { native, on, type Placement } from './native';
 import { PillRenderer } from './renderer';
 import type { Placed } from './segments';
-import type { PillColor } from './settings';
+import { glassTint, type PillColor } from './settings';
 import { springs } from './spring';
 
 export interface MirrorFrame {
@@ -32,6 +32,8 @@ export interface MirrorFrame {
   speed: GlowSpeed;
   accent: string;
   color: PillColor;
+  /** Glass tint, 0 (clear) to 100 (tinted). */
+  glass: number;
   reduce: boolean;
   /** The bot's bubble beside the pill (its diameter), or null when it is off or the island is moving. */
   bot: { d: number } | null;
@@ -53,6 +55,7 @@ export async function runMirror(stage: HTMLElement): Promise<void> {
     if (!f) return;
     document.documentElement.style.setProperty('--accent', f.accent);
     document.documentElement.dataset.pill = f.color;
+    document.documentElement.style.setProperty('--glass', String(glassTint(f.glass)));
     setReducedMotion(f.reduce);
     document.documentElement.classList.toggle('reduce', f.reduce);
     bubble.colour(f.accent);

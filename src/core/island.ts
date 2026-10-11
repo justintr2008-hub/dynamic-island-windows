@@ -20,7 +20,7 @@ import { choosePrimary, type Candidate, type Choice as Picked, type Surface } fr
 import type { MirrorFrame } from './mirror';
 import { PillRenderer } from './renderer';
 import { fitSegments, fitVertical, signature, type Placed, type Seg } from './segments';
-import { accentColor, migrate, TILE_SIZES, type Settings, type TileSize } from './settings';
+import { accentColor, glassTint, migrate, TILE_SIZES, type Settings, type TileSize } from './settings';
 import { availableHere, platform } from './platform';
 import { mapActions, SheetRenderer, type Block, type SheetChip, type SheetView, type Tile } from './sheet';
 import { springs } from './spring';
@@ -214,6 +214,7 @@ export class Island {
     document.documentElement.style.setProperty('--accent', accentColor(s));
     this.bubble.colour(accentColor(s));
     document.documentElement.dataset.pill = s.color;
+    document.documentElement.style.setProperty('--glass', String(glassTint(s.glass)));
   }
 
   private applySettings(next: Settings): void {
@@ -598,7 +599,7 @@ export class Island {
       hidden: hiddenEverywhere, fsHide, fullscreen: this.fullscreenAny,
       glow: beamSpec(beam), speed: s.glow,
       bot: botShown ? { d: botD } : null,
-      accent: accentColor(s), color: s.color, reduce: s.reduceMotion === 'on' || (s.reduceMotion === 'system' && matchMedia('(prefers-reduced-motion: reduce)').matches),
+      accent: accentColor(s), color: s.color, glass: s.glass, reduce: s.reduceMotion === 'on' || (s.reduceMotion === 'system' && matchMedia('(prefers-reduced-motion: reduce)').matches),
     });
     this.pillInput = placed.some((p) => p.seg.t === 'input');
     this.syncInput();
