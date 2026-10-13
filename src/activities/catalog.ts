@@ -250,9 +250,10 @@ export const CATALOG: ActivityMeta[] = [
     category: 'developer',
     enabled: false,
     priority: 'medium',
-    behavior: B(true, true, true, false),
+    // Interrupt on: a session waiting on you (orange) holds the island open.
+    behavior: B(true, true, true, true),
     options: [
-      { key: 'showDone', type: 'toggle', label: 'Pop up when a session finishes', help: 'Shows the island for a moment when a session is done or needs you.', default: true },
+      { key: 'showDone', type: 'toggle', label: 'Pop up when a session finishes', help: 'Shows the island for a moment when a session is done or fails. One that needs you (orange) always opens it, until you answer or tap away.', default: true },
     ],
   },
   {

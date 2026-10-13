@@ -14,6 +14,7 @@
   --bad: #f2695d;
   --info: #6cb0f2;
   --violet: #ad94f6;
+  --purple: #c77dff;
   --pill: #040405;
   /* the colour of lines, tints and hover fills on the pill: light on black, dark on white or matte white */
   --ink: 255, 255, 255;
@@ -37,6 +38,7 @@ html[data-pill='white'] {
   --bad: #d9443a;
   --info: #2f7fd1;
   --violet: #7a5bd6;
+  --purple: #9b3fe0;
 }
 html[data-pill='matte-white'] {
   /* polished metal: lit from above, with a bright streak of reflection across it */
@@ -52,6 +54,7 @@ html[data-pill='matte-white'] {
   --bad: #b3271d;
   --info: #1f62a8;
   --violet: #5d3fb8;
+  --purple: #7c2bc0;
 }
 /* a darker rim, and the top edge catching the light */
 html[data-pill='matte-white'] :is(.pill-bg, .sheet-bg, .bubble-bg, .chat-bar, .chat-card) {
@@ -466,6 +469,7 @@ html.reduce .bubble-costume * { animation: none !important; }
 .pill-glow[data-tone='warn'] { --glow: var(--warn); }
 .pill-glow[data-tone='bad'] { --glow: var(--bad); }
 .pill-glow[data-tone='info'] { --glow: var(--info); }
+.pill-glow[data-tone='purple'] { --glow: var(--purple); }
 
 .pill-content {
   position: absolute;
@@ -527,6 +531,7 @@ html.card-merged .chat { opacity: 0; pointer-events: none; }
 .tone-bad { color: var(--bad); }
 .tone-info { color: var(--info); }
 .tone-violet { color: var(--violet); }
+.tone-purple { color: var(--purple); }
 
 /* icon */
 .seg-icon { width: 18px; height: 18px; }
@@ -580,6 +585,7 @@ html.card-merged .chat { opacity: 0; pointer-events: none; }
 .seg-progress .pace { position: absolute; top: 0; bottom: 0; width: 1.5px; margin-left: -0.75px; background: rgb(var(--ink)); }
 .seg-progress.indeterminate .fill { transform: none; width: 34%; animation: slide 1.25s cubic-bezier(0.65, 0, 0.35, 1) infinite; }
 .seg-progress.tone-default { color: var(--fg); }
+.seg-progress.tone-purple { color: var(--purple); }
 
 /* equalizer bars: the iPhone's wave. Seven thin capsules grow out of the
    middle, short at the edges and tall in the centre, eased so they glide. */
@@ -1042,6 +1048,7 @@ html.card-merged .chat { opacity: 0; pointer-events: none; }
 .sb-meter.tone-bad { color: var(--bad); }
 .sb-meter.tone-warn { color: var(--warn); }
 .sb-meter.tone-good { color: var(--good); }
+.sb-meter.tone-purple { color: var(--purple); }
 
 /* now playing: the iPhone's expanded music island */
 .sb-player { display: flex; flex-direction: column; gap: 14px; padding: 4px 6px 2px; }
@@ -1205,6 +1212,7 @@ html.card-merged .chat { opacity: 0; pointer-events: none; }
 .tile[data-tone='bad'] { --tint: var(--bad); }
 .tile[data-tone='info'] { --tint: var(--info); }
 .tile[data-tone='violet'] { --tint: var(--violet); }
+.tile[data-tone='purple'] { --tint: var(--purple); }
 .tile[data-tone='muted'] { --tint: var(--muted); }
 .tile .ti { width: 18px; height: 18px; flex: none; color: var(--tint); }
 .tile .tv { flex: none; font: 600 19px/1.15 var(--font); font-variant-numeric: tabular-nums; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: auto; }

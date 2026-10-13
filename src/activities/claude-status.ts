@@ -10,7 +10,8 @@ import type { Seg, Tone } from '../core/segments';
 import type { Block, SheetRow, SheetView, Tile } from '../core/sheet';
 import { BaseActivity } from './base';
 
-export type StatusState = 'running' | 'input' | 'done' | 'failed' | 'idle';
+/** shell: a shell Claude started is still running (Claude Code's "1 shell"). */
+export type StatusState = 'running' | 'shell' | 'input' | 'done' | 'failed' | 'idle';
 
 /** One row of the widget, as island.json has it. */
 export interface StatusRow {
@@ -19,6 +20,8 @@ export interface StatusRow {
   where: string;
   tag: string;
   state: StatusState;
+  /** Claude's own state when a shell is shown over it ("done" with a server still running). */
+  turn?: StatusState;
   word: string;
   since: number;
   grey: boolean;
@@ -37,7 +40,12 @@ const SHOW_MS = 4000;
 /** The widget's colours, in the island's tones. */
 export function toneOf(row: StatusRow): Tone {
   if (row.grey) return 'dim';
-  return ({ running: 'info', input: 'warn', done: 'good', failed: 'bad', idle: 'dim' } as const)[row.state] ?? 'dim';
+  return ({ running: 'info', shell: 'purple', input: 'warn', done: 'good', failed: 'bad', idle: 'dim' } as const)[row.state] ?? 'dim';
+}
+
+/** The progress bar's colour: purple for a shell, Claude's own for a run. */
+function barTone(row: StatusRow): Tone {
+  return row.state === 'shell' ? 'purple' : 'claude';
 }
 
 /**
@@ -85,16 +93,19 @@ export class ClaudeStatusActivity extends BaseActivity {
     if (!this.alive) return;
     const rows = got && Date.now() - got.written < DEAD_MS ? got.rows : [];
 
-    // A session that just finished or started waiting on you pops the island.
+    // A session that just finished pops the island for a moment; one waiting on
+    // you holds it open instead (status().urgent).
     const opts = this.ctx.options<{ showDone?: boolean }>();
+    // Claude's own state counts, so a turn that ends with a server still running is still "done".
     for (const r of rows) {
+      const st = r.turn ?? r.state;
       const before = this.last.get(r.id);
-      if (before && before !== r.state && (r.state === 'input' || r.state === 'done' || r.state === 'failed')) {
-        if (opts.showDone !== false) this.ctx.surface({ key: `${r.id}:${r.state}`, ms: SHOW_MS, level: 'expanded' });
-        this.saw(r.state === 'done' ? 'claude-done' : r.state === 'failed' ? 'claude-error' : 'claude-asks', `claudeStatus:${r.id}`);
+      if (before && before !== st && (st === 'input' || st === 'done' || st === 'failed')) {
+        if (opts.showDone !== false && st !== 'input') this.ctx.surface({ key: `${r.id}:${st}`, ms: SHOW_MS, level: 'expanded' });
+        this.saw(st === 'done' ? 'claude-done' : st === 'failed' ? 'claude-error' : 'claude-asks', `claudeStatus:${r.id}`);
       }
     }
-    this.last = new Map(rows.map((r) => [r.id, r.state]));
+    this.last = new Map(rows.map((r) => [r.id, r.turn ?? r.state]));
 
     const sig = (x: StatusRow[]) => JSON.stringify(x);
     if (sig(rows) !== sig(this.rows)) {
@@ -115,16 +126,22 @@ export class ClaudeStatusActivity extends BaseActivity {
   status(): ActivityStatus {
     if (!this.rows.length) return { active: false };
     const running = this.rows.some((r) => !r.grey && r.state === 'running');
+    const shell = this.rows.some((r) => !r.grey && r.state === 'shell');
     const waiting = this.waiting().length;
-    const bar = this.rows.find((r) => r.progress)?.progress;
+    const barRow = this.rows.find((r) => r.progress);
+    const bar = barRow?.progress;
+    // Orange (a permission or a question) holds the island open, Quiet or not, from
+    // any window, until it is answered or tapped away. A new one opens it again.
+    const asking = this.rows.filter((r) => !r.grey && r.state === 'input');
     return {
       active: true,
-      weight: running || waiting ? 'foreground' : 'background',
+      weight: running || shell || waiting ? 'foreground' : 'background',
+      urgent: asking.length ? { key: asking.map((r) => `${r.id}@${r.since}`).join(','), level: 'expanded' } : null,
       summary: waiting ? `${waiting} awaiting you` : `${this.rows.length} Claude session${this.rows.length === 1 ? '' : 's'}`,
       beam: waiting
         ? { tone: 'warn', motion: 'pulse' }
-        : bar
-          ? { tone: 'info', motion: 'progress', value: bar.value }
+        : bar && barRow
+          ? { tone: barRow.state === 'shell' ? 'purple' : 'info', motion: 'progress', value: bar.value }
           : running
             ? { tone: 'info', motion: 'orbit' }
             : null,
@@ -153,7 +170,7 @@ export class ClaudeStatusActivity extends BaseActivity {
     dots.forEach((r, i) => segs.push({ t: 'dot', key: `d:${r.id}`, tone: toneOf(r), pulse: r.state === 'running' && !r.grey, prio: i ? 4 : 0, tip: `${r.label} · ${r.where}` }));
     if (resting) return segs;
     segs.push({ t: 'text', key: 'label', text: t.label, weight: 'semibold', prio: 1, max: roomy ? 220 : 140 });
-    if (roomy && t.progress) segs.push({ t: 'progress', key: 'bar', value: t.progress.value, tone: 'claude', w: 70, side: 'end', prio: 3 });
+    if (roomy && t.progress) segs.push({ t: 'progress', key: 'bar', value: t.progress.value, tone: barTone(t), w: 70, side: 'end', prio: 3 });
     segs.push({
       t: 'text',
       key: 'state',
@@ -199,10 +216,10 @@ export class ClaudeStatusActivity extends BaseActivity {
     rows.forEach((row, i) => {
       blocks.push({ t: 'rows', key: `r:${row.key}`, items: [row] });
       const p = this.rows[i].progress;
-      if (p) blocks.push({ t: 'meter', key: `m:${row.key}`, label: p.method, value: p.value, text: p.text, tone: 'claude' });
+      if (p) blocks.push({ t: 'meter', key: `m:${row.key}`, label: p.method, value: p.value, text: p.text, tone: barTone(this.rows[i]) });
     });
-    // Pointing at it, or a chat finishing: the card grows out of the pill instead of hanging under it.
-    return { key: 'claudeStatus', blocks, merge: env.reason === 'hover' || env.reason === 'surfaced' };
+    // Pointing at it, a chat finishing or one waiting on you: the card grows out of the pill instead of hanging under it.
+    return { key: 'claudeStatus', blocks, merge: env.reason === 'hover' || env.reason === 'surfaced' || env.reason === 'urgent' };
   }
 
   tile(env: SheetEnv): Tile | null {

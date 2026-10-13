@@ -5,7 +5,7 @@
 
 import type { IconName } from './icons';
 
-export type Tone = 'default' | 'muted' | 'dim' | 'accent' | 'claude' | 'good' | 'warn' | 'bad' | 'info' | 'violet';
+export type Tone = 'default' | 'muted' | 'dim' | 'accent' | 'claude' | 'good' | 'warn' | 'bad' | 'info' | 'violet' | 'purple';
 export type Side = 'start' | 'center' | 'end';
 
 interface Base {

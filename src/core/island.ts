@@ -477,7 +477,8 @@ export class Island {
     const urgentKeys = new Set<string>();
     for (const [id, st] of statuses) if (st.urgent) urgentKeys.add(`${id}:${st.urgent.key}`);
     for (const k of this.dismissedUrgent) if (!urgentKeys.has(k)) this.dismissedUrgent.delete(k);
-    if (choice.urgent && pStatus?.urgent && !this.dismissedUrgent.has(`${primary}:${pStatus.urgent.key}`)) {
+    // A merged urgent card covers the pill, which rests under it like under the hover card.
+    if (choice.urgent && pStatus?.urgent && !this.sheet.isMerged && !this.dismissedUrgent.has(`${primary}:${pStatus.urgent.key}`)) {
       level = atLeast(level, pStatus.urgent.level ?? 'maximum');
     }
     if (this.previewLevel) level = this.previewLevel;
@@ -532,6 +533,10 @@ export class Island {
         segs = this.namespaced(primary, own);
         viewKey = `act:${primary}`;
         if (s.showSecondary && level !== 'idle') segs = segs.concat(this.secondarySegments(choice.visible.filter((id) => id !== primary), statuses, level, now, vertical));
+      }
+      // Quiet on: a small moon at the end of the pill, like the iPhone's Focus icon, so it is never on unnoticed.
+      if (this.settings.general.dnd && this.view === 'main') {
+        segs = segs.concat([{ t: 'icon', key: 'island/quiet', icon: 'moon', tone: 'violet', size: 'sm', side: 'end', prio: 1, tip: 'Quiet is on: right-click the island to turn it off' }]);
       }
       return { size, inner, crossMax, segs, viewKey };
     };
@@ -700,7 +705,11 @@ export class Island {
       pos('right', 'pos-right', 'Right centre'),
       pos('bottom', 'pos-bottom', 'Bottom centre'),
       pos('left', 'pos-left', 'Left centre'),
-      { t: 'sep', key: 'menu/sep' },
+      { t: 'button', key: 'menu/activities', icon: 'grid', label: 'Activities', action: 'island:app', arg: 'activities', side: 'end', style: 'secondary', prio: 1 },
+      { t: 'button', key: 'menu/settings', icon: 'settings', action: 'island:app', arg: 'settings', side: 'end', style: 'ghost', tip: 'Settings', prio: 1 },
+      // Last, at the far end: the menu opens under the pointer, so the next click lands
+      // in the middle, and Quiet is too easy to turn on by accident there.
+      { t: 'sep', key: 'menu/sep', side: 'end' },
       {
         t: 'button',
         key: 'menu/dnd',
@@ -709,10 +718,9 @@ export class Island {
         style: this.settings.general.dnd ? 'primary' : 'ghost',
         action: 'island:dnd',
         tip: platform === 'macos' ? 'Quiet: the island stays small and its notifications wait' : 'Do not disturb, for Windows and the island: notifications wait and the island stays small',
+        side: 'end',
         prio: 2,
       },
-      { t: 'button', key: 'menu/activities', icon: 'grid', label: 'Activities', action: 'island:app', arg: 'activities', side: 'end', style: 'secondary', prio: 1 },
-      { t: 'button', key: 'menu/settings', icon: 'settings', action: 'island:app', arg: 'settings', side: 'end', style: 'ghost', tip: 'Settings', prio: 1 },
     ];
   }
 

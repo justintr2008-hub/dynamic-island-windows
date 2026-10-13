@@ -8,7 +8,7 @@ Built on [Island](https://github.com/cutsandedges21/windows-dynamic-island). Thi
 
 - **Cards that grow out of the island**, like holding the iPhone's: hover it (or let a Claude chat finish) and the pill itself grows into the card, then shrinks back into it.
 - **A music card** with the album art, a scrubber you can click to jump through the song, and back / play-pause / forward.
-- **Claude Status**: every Claude Code session as a dot on the island, with its progress, and a card listing them all.
+- **Claude Status**: every Claude Code session as a dot on the island, with its progress, and a card listing them all. A session turns purple while a shell it started is still running (Claude Code's "1 shell"), with a bar once that command has been timed before.
 - **A Glass look with a Clear ↔ Tinted slider**, like iOS Liquid Glass.
 
 ## Run it
@@ -33,7 +33,7 @@ Built on [Island](https://github.com/cutsandedges21/windows-dynamic-island). Thi
 | Click it | It opens to its widest |
 | Click anywhere else | It goes back to its resting size |
 | Scroll on it | Moves to the next thing that is happening, one per scroll |
-| Right-click it | Positions (top, right, bottom, left), Quiet, Activities, Settings |
+| Right-click it | Positions (top, right, bottom, left), Activities, Settings, and Quiet at the far end. While Quiet is on, a small moon shows on the pill |
 | `Alt+Shift+Space` | Open or close the island |
 | `Alt+Shift+A` | Activities window |
 | `Alt+Shift+1`–`9`, `Alt+Shift+0` | Switch to a Claude session / the one that needs you (if Usage Clip isn't holding them) |
