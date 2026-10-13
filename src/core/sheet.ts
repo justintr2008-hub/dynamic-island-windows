@@ -35,8 +35,12 @@ export interface SheetRow {
   icon?: string;
   dot?: Tone;
   pulse?: boolean;
+  /** A small pink dot on the dot's corner: something new to read. */
+  unread?: boolean;
   title: string;
   detail?: string;
+  /** A thin progress bar after the detail, to the end of the row: what it is (label) and the time left (text). */
+  bar?: RowBar;
   badge?: string;
   tone?: Tone;
   action?: string;
@@ -44,6 +48,13 @@ export interface SheetRow {
   tip?: string;
   /** A small button at the row's end (shown on hover), e.g. hide. */
   button?: SheetButton;
+}
+
+export interface RowBar {
+  value: number;
+  text: string;
+  label?: string;
+  tone?: Tone;
 }
 
 /** The pill's chips (other activities, "+N"), carried onto a card that covers the pill. */
@@ -826,6 +837,16 @@ export class SheetRenderer {
         this.fillMeter(e, b);
         return true;
       }
+      case 'rows': {
+        // Only the bars moved: fill them where they are, so a row being clicked stays put.
+        const shape = (items: SheetRow[]) => JSON.stringify(items.map((r) => ({ ...r, bar: r.bar && { label: r.bar.label, tone: r.bar.tone } })));
+        if (node.spec.t !== 'rows' || shape(node.spec.items) !== shape(b.items)) return false;
+        b.items.forEach((r, i) => {
+          const line = e.children[i]?.querySelector<HTMLElement>('.r2.with-bar');
+          if (line && r.bar) this.fillRowBar(line, r.bar);
+        });
+        return true;
+      }
       case 'countdown': {
         const prev = node.spec.t === 'countdown' ? node.spec : null;
         e.className = `sb sb-countdown tone-${b.tone ?? 'claude'}`;
@@ -882,13 +903,20 @@ export class SheetRenderer {
     const e = make(r.action && !r.button ? 'button' : 'div', `row${r.action ? ' act' : ''}`);
     if (e instanceof HTMLButtonElement) e.type = 'button';
     if (r.dot) {
-      const d = make('span', `rd tone-${r.dot}${r.pulse ? ' pulse' : ''}`);
-      d.append(make('i', 'ring'), make('i', 'core'));
+      const d = make('span', `rd tone-${r.dot}${r.pulse ? ' pulse' : ''}${r.unread ? ' unread' : ''}`);
+      d.append(make('i', 'ring'), make('i', 'core'), make('i', 'badge'));
       e.append(d);
     } else if (r.icon) e.append(iconEl(r.icon, `ri tone-${r.tone ?? 'muted'}`));
     const tx = make('span', 'rt');
     tx.append(make('span', 'r1', r.title));
-    if (r.detail) tx.append(make('span', 'r2', r.detail));
+    if (r.bar) {
+      const line = make('span', 'r2 with-bar');
+      const bar = make('span', 'rbar');
+      bar.append(make('i', 'fill'));
+      line.append(make('span', 'rbd', r.detail ?? ''), bar, make('span', 'rbs'), make('span', 'rbt'));
+      this.fillRowBar(line, r.bar);
+      tx.append(line);
+    } else if (r.detail) tx.append(make('span', 'r2', r.detail));
     e.append(tx);
     if (r.badge) e.append(make('span', 'rb', r.badge));
     if (r.button) {
@@ -1050,6 +1078,13 @@ export class SheetRenderer {
       submit();
     });
     return e;
+  }
+
+  private fillRowBar(line: HTMLElement, b: RowBar): void {
+    line.querySelector('.rbar')!.className = `rbar tone-${b.tone ?? 'claude'}`;
+    line.querySelector<HTMLElement>('.fill')!.style.transform = `scaleX(${clamp01(b.value)})`;
+    line.querySelector('.rbs')!.textContent = b.label ?? '';
+    line.querySelector('.rbt')!.textContent = b.text;
   }
 
   private fillMeter(e: HTMLElement, b: Extract<Block, { t: 'meter' }>): void {

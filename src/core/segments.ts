@@ -19,7 +19,8 @@ interface Base {
 
 export type Seg =
   | (Base & { t: 'icon'; icon: IconName; tone?: Tone; anim?: 'pulse' | 'spin' | 'bob'; size?: 'sm' | 'md' | 'lg' })
-  | (Base & { t: 'dot'; tone: Tone; pulse?: boolean })
+  /** badge: a small pink dot on its corner, something new to read. */
+  | (Base & { t: 'dot'; tone: Tone; pulse?: boolean; badge?: boolean })
   | (Base & {
       t: 'text';
       text: string;

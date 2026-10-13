@@ -160,14 +160,15 @@ export class ClaudeStatusActivity extends BaseActivity {
     const roomy = env.level === 'expanded' || env.level === 'maximum';
     const segs: Seg[] = [{ t: 'icon', key: 'mark', icon: 'claude', tone: 'claude', prio: 0 }];
     if (env.vertical) {
-      segs.push({ t: 'dot', key: 'dot', tone: toneOf(t), pulse: t.state === 'running' && !t.grey, prio: 0 });
+      segs.push({ t: 'dot', key: 'dot', tone: toneOf(t), pulse: t.state === 'running' && !t.grey, badge: this.rows.some((r) => r.unread), prio: 0 });
       return segs;
     }
     // At rest it is only the dots, like the widget's compact mode; the name
     // shows when the island grows (hover, click, or a session finishing).
     const resting = !roomy && !env.hover && !env.open && !env.surfaced;
     const dots = this.rows.slice(0, 8);
-    dots.forEach((r, i) => segs.push({ t: 'dot', key: `d:${r.id}`, tone: toneOf(r), pulse: r.state === 'running' && !r.grey, prio: i ? 4 : 0, tip: `${r.label} · ${r.where}` }));
+    // A pink corner dot, like the widget's: that session has an answer you haven't read.
+    dots.forEach((r, i) => segs.push({ t: 'dot', key: `d:${r.id}`, tone: toneOf(r), pulse: r.state === 'running' && !r.grey, badge: r.unread, prio: i ? 4 : 0, tip: `${r.label} · ${r.where}` }));
     if (resting) return segs;
     segs.push({ t: 'text', key: 'label', text: t.label, weight: 'semibold', prio: 1, max: roomy ? 220 : 140 });
     if (roomy && t.progress) segs.push({ t: 'progress', key: 'bar', value: t.progress.value, tone: barTone(t), w: 70, side: 'end', prio: 3 });
@@ -183,15 +184,16 @@ export class ClaudeStatusActivity extends BaseActivity {
     return segs;
   }
 
-  private sheetRows(now: number): SheetRow[] {
+  /** withBars: the card's rows carry their progress bar inline (the grid's tile stays plain). */
+  private sheetRows(now: number, withBars = false): SheetRow[] {
     return this.rows.map((r) => ({
       key: r.id,
       dot: toneOf(r),
       pulse: r.state === 'running' && !r.grey,
+      unread: r.unread,
       title: r.label,
       detail: `${r.where} · ${[r.word, age(now / 1000 - r.since)].filter(Boolean).join(' ')}${r.hidden ? ' · hidden' : ''}`,
-      badge: r.unread ? 'new' : undefined,
-      tone: r.unread ? 'violet' : undefined,
+      bar: withBars && r.progress ? { value: r.progress.value, text: r.progress.text, label: r.progress.method, tone: barTone(r) } : undefined,
       action: 'jump',
       arg: r.id,
       tip: `${r.label} · ${r.where}`,
@@ -211,13 +213,8 @@ export class ClaudeStatusActivity extends BaseActivity {
         sub: waiting ? `${waiting} awaiting you` : `${this.rows.length} session${this.rows.length === 1 ? '' : 's'}`,
       },
     ];
-    // Each row, with its progress bar under it like the widget.
-    const rows = this.sheetRows(env.now);
-    rows.forEach((row, i) => {
-      blocks.push({ t: 'rows', key: `r:${row.key}`, items: [row] });
-      const p = this.rows[i].progress;
-      if (p) blocks.push({ t: 'meter', key: `m:${row.key}`, label: p.method, value: p.value, text: p.text, tone: barTone(this.rows[i]) });
-    });
+    // Each row carries its progress bar on its second line, after "Terminal · running 6m".
+    blocks.push({ t: 'rows', key: 'rows', items: this.sheetRows(env.now, true) });
     // Pointing at it, a chat finishing or one waiting on you: the card grows out of the pill instead of hanging under it.
     return { key: 'claudeStatus', blocks, merge: env.reason === 'hover' || env.reason === 'surfaced' || env.reason === 'urgent' };
   }
