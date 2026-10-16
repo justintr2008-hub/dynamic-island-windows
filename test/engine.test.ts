@@ -182,6 +182,17 @@ describe('priority', () => {
     expect(choosePrimary([music, download], { selected: 'downloads', pickedAt: 1000, surfaces: fresh, now: 3000, dnd: false }).primary).toBe('music');
   });
 
+  it('a pop-up that stays in front shows its event first, then keeps the pill', () => {
+    const music = cand('music', {}, 'high', 0);
+    const status = cand('claudeStatus', {}, 'high', 1);
+    // The island picks Claude Status just before its "chat finished" event (island.ts surface()).
+    const done = [{ id: 'claudeStatus', key: 'S1:done', until: 5000, level: 'expanded' as const, at: 1000 }];
+    const during = choosePrimary([music, status], { selected: 'claudeStatus', pickedAt: 999, surfaces: done, now: 2000, dnd: false });
+    expect(during).toMatchObject({ primary: 'claudeStatus', surfaced: 'S1:done' });
+    const after = choosePrimary([music, status], { selected: 'claudeStatus', pickedAt: 999, surfaces: [], now: 6000, dnd: false });
+    expect(after).toMatchObject({ primary: 'claudeStatus', surfaced: null });
+  });
+
   it('scrolling steps through every activity in one steady order, whichever is picked', () => {
     const all = [cand('music', {}, 'high', 0), cand('claudeStatus', {}, 'high', 1), cand('downloads', {}, 'medium', 2)];
     const ranked = (selected: string | null) => choosePrimary(all, { selected, pickedAt: 1, surfaces: [], now: 2, dnd: false }).ranked;
