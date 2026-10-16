@@ -229,9 +229,18 @@ describe('Claude Status: the rules (widget.pyw)', () => {
     const items = [item({ id: 'aaaa1', state: 'done', since: 0 }), item({ id: 'bbbb2', title: 'Fix the build' }), item({ id: 'c', title: '', project: 'zeta', state: 'input' })];
     labelItems(items);
     expect(items.map((x) => x.label)).toEqual(['Fix the build · aaaa', 'Fix the build · bbbb', 'zeta']);
-    expect(sortItems(items, 1000).map((x) => x.id)).toEqual(['bbbb2', 'c', 'aaaa1']); // done 1000 s ago is grey
+    expect(sortItems(items, 1000).map((x) => x.id)).toEqual(['c', 'bbbb2', 'aaaa1']); // orange first; done 1000 s ago is grey
+    const mixed = [item({ id: 'run', state: 'running' }), item({ id: 'red', state: 'failed', stopped: true }), item({ id: 'ask', state: 'input' })];
+    labelItems(mixed);
+    expect(sortItems(mixed, 1000).map((x) => x.id)).toEqual(['ask', 'red', 'run']);
     expect(isStale(item({ state: 'done', since: 0 }), 601)).toBe(true);
     expect(normTitle('✳ Fix the build ')).toBe('fix the build');
+  });
+
+  it('a turn stopped with Esc says so', () => {
+    expect(stateWord(item({ state: 'failed', stopped: true }))).toBe('stopped');
+    expect(stateWord(item({ state: 'failed' }))).toBe('failed');
+    expect(toneOf(row({ state: 'failed', word: 'stopped', stopped: true }))).toBe('bad');
   });
 
   it('a dismissal lasts until the session moves on', () => {

@@ -33,6 +33,8 @@ export interface StatusRow {
   unread: boolean;
   hidden: boolean;
   progress: { value: number; text: string; method: string } | null;
+  /** You stopped it (Esc): red like a failure, but nothing pops up. */
+  stopped?: boolean;
 }
 
 /** What a row knows while the rules run (the widget's session dict). */
@@ -55,6 +57,8 @@ export interface Item {
   /** The command Claude is waiting on: its bar is closer than the run's. */
   command?: { cmd: string; desc: string; created: number };
   bgShells?: number;
+  /** You pressed Esc mid-turn. */
+  stopped?: boolean;
   view?: SessionView;
   /** A Claude Code session's task list and shell calls, from its transcript. */
   work?: Work;
@@ -62,8 +66,8 @@ export interface Item {
 }
 
 const WORDS: Record<StatusState, string> = { running: 'running', shell: 'shell', input: 'needs you', done: 'done', failed: 'failed', idle: 'idle' };
-/** Running first; grey ones (idle, or done a while) sink to the bottom. */
-const ORDER: Record<StatusState, number> = { running: 0, shell: 0, input: 1, failed: 2, done: 3, idle: 4 };
+/** Orange (needs you) and red (failed or stopped) first, then running; grey ones (idle, or done a while) sink to the bottom. */
+const ORDER: Record<StatusState, number> = { input: 0, failed: 1, running: 2, shell: 2, done: 3, idle: 4 };
 const DIMMED = 5;
 
 /** Claude Code's status (Island's tracker) in the widget's words. A session nobody has prompted yet isn't listed. */
@@ -73,7 +77,8 @@ const CODE_STATE: Partial<Record<Status, StatusState>> = {
   awaiting_input: 'done',
   completed: 'done',
   errored: 'failed',
-  interrupted: 'idle',
+  // Esc mid-turn: red, like the turn ended badly (Claude Code fires no hook for it).
+  interrupted: 'failed',
   unknown: 'idle',
 };
 
@@ -124,8 +129,9 @@ export function sourceName(x: Pick<Item, 'source' | 'host'>): string {
 
 const shellsText = (n: number) => `${n} shell${n === 1 ? '' : 's'}`;
 
-export function stateWord(x: Pick<Item, 'state' | 'shell' | 'bgShells'>): string {
+export function stateWord(x: Pick<Item, 'state' | 'shell' | 'bgShells' | 'stopped'>): string {
   if (x.state === 'shell') return shellsText(x.shell?.count ?? 1);
+  if (x.stopped && x.state === 'failed') return 'stopped';
   // Claude still working, with background shells too: "running · 1 shell".
   return x.bgShells ? `${WORDS[x.state]} · ${shellsText(x.bgShells)}` : WORDS[x.state];
 }
@@ -451,7 +457,9 @@ export class StatusEngine {
       else if (state === 'running') since = w.runStarted ?? turnStart ?? now;
       else if (state === 'input') since = prev ? now : ended;
       else since = Math.min(now, ended);
-      if (prev && prev.state === 'running' && (state === 'done' || state === 'failed') && this.watched.has(v.id)) {
+      const stopped = v.status === 'interrupted';
+      // A run you stopped says nothing about how long runs take.
+      if (prev && prev.state === 'running' && (state === 'done' || state === 'failed') && !stopped && this.watched.has(v.id)) {
         const started = w.runStarted ?? turnStart;
         if (started != null) this.addRun('history', since - started);
       }
@@ -461,7 +469,7 @@ export class StatusEngine {
       const ancestors = this.tracker.probe.ancestors(v.pid).map((a) => a.name);
       out.push({
         id: v.id, source: 'code', title: v.title ?? '', project: v.project || v.displayTitle, host: hostOf(ancestors, v.kind),
-        state, since, runStarted: w.runStarted ?? turnStart, prog: w.prog ? { ...w.prog } : null, unread: false, visible: true, label: '', view: v, work: w,
+        state, since, runStarted: w.runStarted ?? turnStart, prog: w.prog ? { ...w.prog } : null, unread: false, visible: true, label: '', stopped, view: v, work: w,
       });
     }
     for (const id of [...this.codeStates.keys()]) {
@@ -722,6 +730,7 @@ export class StatusEngine {
         unread: x.unread,
         hidden: !x.visible,
         progress: bar ? { value: Math.round(bar[0] * 1000) / 1000, text: bar[1], method: bar[2] } : null,
+        ...(x.stopped && x.state === 'failed' ? { stopped: true } : {}),
       };
     });
   }

@@ -77,7 +77,8 @@ export class ClaudeStatusActivity extends BaseActivity {
     for (const r of rows) {
       const st = r.turn ?? r.state;
       const before = this.last.get(r.id);
-      if (before && before !== st && (st === 'input' || st === 'done' || st === 'failed')) {
+      // Stopping one yourself (Esc) is no news: it only turns red.
+      if (before && before !== st && !r.stopped && (st === 'input' || st === 'done' || st === 'failed')) {
         if (opts.showDone !== false && st !== 'input') this.ctx.surface({ key: `${r.id}:${st}`, ms: SHOW_MS, level: 'expanded' });
         this.saw(st === 'done' ? 'claude-done' : st === 'failed' ? 'claude-error' : 'claude-asks', `claudeStatus:${r.id}`);
       }
@@ -91,13 +92,15 @@ export class ClaudeStatusActivity extends BaseActivity {
     }
   }
 
+  /** Waiting on you: a question, or a turn that failed (not one you stopped yourself). */
   private waiting(): StatusRow[] {
-    return this.rows.filter((r) => !r.grey && (r.state === 'input' || r.state === 'failed'));
+    return this.rows.filter((r) => !r.grey && !r.stopped && (r.state === 'input' || r.state === 'failed'));
   }
 
   /** The row the pill talks about: the widget's own order (running first). */
   private top(): StatusRow | null {
-    return this.waiting()[0] ?? this.rows[0] ?? null;
+    // The engine sorts orange and red first.
+    return this.rows[0] ?? null;
   }
 
   status(): ActivityStatus {
@@ -105,6 +108,8 @@ export class ClaudeStatusActivity extends BaseActivity {
     const running = this.rows.some((r) => !r.grey && r.state === 'running');
     const shell = this.rows.some((r) => !r.grey && r.state === 'shell');
     const waiting = this.waiting().length;
+    // Red, stopped too, puts Claude Status ahead of quieter activities like orange does.
+    const red = this.rows.some((r) => !r.grey && r.state === 'failed');
     const barRow = this.rows.find((r) => r.progress);
     const bar = barRow?.progress;
     // Orange (a permission or a question) holds the island open, Quiet or not, from
@@ -112,7 +117,7 @@ export class ClaudeStatusActivity extends BaseActivity {
     const asking = this.rows.filter((r) => !r.grey && r.state === 'input');
     return {
       active: true,
-      weight: running || shell || waiting ? 'foreground' : 'background',
+      weight: running || shell || waiting || red ? 'foreground' : 'background',
       urgent: asking.length ? { key: asking.map((r) => `${r.id}@${r.since}`).join(','), level: 'expanded' } : null,
       summary: waiting ? `${waiting} awaiting you` : `${this.rows.length} Claude session${this.rows.length === 1 ? '' : 's'}`,
       beam: waiting
