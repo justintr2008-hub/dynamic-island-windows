@@ -8,7 +8,7 @@ Built on [Island](https://github.com/cutsandedges21/windows-dynamic-island). Thi
 
 - **Cards that grow out of the island**, like holding the iPhone's: hover it (or let a Claude chat finish) and the pill itself grows into the card, then shrinks back into it.
 - **A music card** with the album art, a scrubber you can click to jump through the song, and back / play-pause / forward.
-- **Claude Status**: every Claude Code session as a dot on the island, with its progress, and a card listing them all. A session turns purple while a shell it started is still running (Claude Code's "1 shell"), with a bar once that command has been timed before.
+- **Claude Status**: every Claude session as a dot on the island (Claude Code, the Claude app and Claude in Chrome), with its progress, and a card listing them all. Nothing else to install. A session turns purple while a shell it started is still running (Claude Code's "1 shell"), with a bar once that command has been timed before.
 - **A Glass look with a Clear ↔ Tinted slider**, like iOS Liquid Glass.
 
 ## Run it

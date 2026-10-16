@@ -1,40 +1,19 @@
-// Claude Status: the Claude Sessions widget (~/.claude/claude-status) inside
-// the island. The widget does all the work (hooks, the app and Chrome watcher,
-// notifications, workflows, estimates) and writes exactly what it shows to
-// island.json; this activity only draws that file and switches to a session
-// when one is clicked.
+// Claude Status: every Claude session at a glance, the way the Claude Sessions
+// widget showed them: Claude Code, the Claude app and Chrome, with purple
+// background shells, unread dots and progress bars for long runs. The engine
+// (engine.ts) works it all out inside Island; this file draws it and switches
+// to a session when one is clicked.
 
-import type { ActivityStatus, ChipView, RenderEnv, SheetEnv } from '../core/activity';
-import { native } from '../core/native';
-import type { Seg, Tone } from '../core/segments';
-import type { Block, SheetRow, SheetView, Tile } from '../core/sheet';
-import { BaseActivity } from './base';
+import type { ActivityStatus, ChipView, RenderEnv, SheetEnv } from '../../core/activity';
+import { native } from '../../core/native';
+import type { Seg, Tone } from '../../core/segments';
+import type { Block, SheetRow, SheetView, Tile } from '../../core/sheet';
+import { BaseActivity } from '../base';
+import { StatusEngine, type StatusRow, type StatusState } from './engine';
 
-/** shell: a shell Claude started is still running (Claude Code's "1 shell"). */
-export type StatusState = 'running' | 'shell' | 'input' | 'done' | 'failed' | 'idle';
-
-/** One row of the widget, as island.json has it. */
-export interface StatusRow {
-  id: string;
-  label: string;
-  where: string;
-  tag: string;
-  state: StatusState;
-  /** Claude's own state when a shell is shown over it ("done" with a server still running). */
-  turn?: StatusState;
-  word: string;
-  since: number;
-  grey: boolean;
-  unread: boolean;
-  hidden: boolean;
-  progress: { value: number; text: string; method: string } | null;
-  hwnd: number;
-  tabs: string[];
-}
+export type { StatusRow, StatusState } from './engine';
 
 const POLL_MS = 1000;
-/** The widget rewrites the file at least every 5 s; older means it is closed. */
-const DEAD_MS = 20_000;
 const SHOW_MS = 4000;
 
 /** The widget's colours, in the island's tones. */
@@ -59,21 +38,10 @@ export function age(seconds: number): string {
   return `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`;
 }
 
-export function parseIsland(text: string | null): { written: number; rows: StatusRow[] } | null {
-  if (!text) return null;
-  try {
-    const j = JSON.parse(text) as { written?: unknown; sessions?: unknown };
-    if (typeof j.written !== 'number' || !Array.isArray(j.sessions)) return null;
-    const rows = j.sessions.filter((r): r is StatusRow => !!r && typeof r === 'object' && typeof (r as StatusRow).id === 'string');
-    return { written: j.written * 1000, rows };
-  } catch {
-    return null;
-  }
-}
-
 export class ClaudeStatusActivity extends BaseActivity {
   private rows: StatusRow[] = [];
-  private path = '';
+  private engine: StatusEngine | null = null;
+  private busy = false;
   private last = new Map<string, StatusState>();
 
   constructor() {
@@ -82,16 +50,25 @@ export class ClaudeStatusActivity extends BaseActivity {
 
   protected async init(): Promise<void> {
     const env = await native.claudeEnv();
-    if (!env) return;
-    this.path = `${env.configDir}\\claude-status\\island.json`;
+    if (!env || !this.alive) return;
+    this.engine = new StatusEngine(env.configDir, (...p) => this.ctx.log(...p));
+    await this.engine.importWidget(env.configDir);
     this.every(POLL_MS, () => void this.poll(), true);
   }
 
   private async poll(): Promise<void> {
-    if (!this.path) return;
-    const got = parseIsland(await native.readText(this.path, 256 * 1024));
+    if (!this.engine || this.busy) return;
+    this.busy = true;
+    let rows: StatusRow[];
+    try {
+      rows = await this.engine.poll();
+    } catch (err) {
+      this.ctx.log('poll error', String(err));
+      return;
+    } finally {
+      this.busy = false;
+    }
     if (!this.alive) return;
-    const rows = got && Date.now() - got.written < DEAD_MS ? got.rows : [];
 
     // A session that just finished pops the island for a moment; one waiting on
     // you holds it open instead (status().urgent).
@@ -197,6 +174,7 @@ export class ClaudeStatusActivity extends BaseActivity {
       action: 'jump',
       arg: r.id,
       tip: `${r.label} · ${r.where}`,
+      button: { key: 'dismiss', icon: 'x', action: 'dismiss', arg: r.id, style: 'ghost', tip: 'Dismiss until it changes' },
     }));
   }
 
@@ -231,15 +209,13 @@ export class ClaudeStatusActivity extends BaseActivity {
   }
 
   async action(name: string, arg: unknown): Promise<void> {
-    if (name !== 'jump') return;
-    const r = this.rows.find((x) => x.id === arg);
-    if (!r) return;
-    await native.allowForeground();
-    // Windows Terminal: pick the session's tab by name, like the widget does.
-    for (const title of r.tabs) {
-      const win = await native.selectTerminalTab(title);
-      if (win) return void (await native.activate(win));
+    if (!this.engine || typeof arg !== 'string') return;
+    if (name === 'dismiss') {
+      this.engine.dismiss(arg);
+      this.rows = this.rows.filter((r) => r.id !== arg);
+      this.ctx.update();
+      return;
     }
-    if (r.hwnd) await native.activate(r.hwnd);
+    if (name === 'jump' && !(await this.engine.jump(arg))) this.ctx.alert('shake');
   }
 }

@@ -65,6 +65,52 @@ export interface TranscriptMeta {
   permissionMode: string | null;
   userTexts: string[];
 }
+/** Claude Status: one event of a transcript scan (fsx.rs transcript_work); `at` in ms. */
+export type WorkEvent =
+  | { k: 'prompt'; at: number }
+  | { k: 'stop'; at: number }
+  | { k: 'todo'; at: number; total: number; done: number }
+  | { k: 'taskCreate'; at: number }
+  | { k: 'taskUpdate'; at: number; id: string; status: string }
+  | { k: 'shell'; at: number; id: string; cmd: string; desc: string; bg: boolean }
+  | { k: 'result'; at: number; id: string; task: string | null };
+export interface WorkScan {
+  consumed: number;
+  size: number;
+  events: WorkEvent[];
+}
+/** Workflow agents still working for a session (fsx.rs workflows). */
+export interface WorkflowRun {
+  session: string;
+  started: number;
+  finished: number;
+  firstMs: number;
+}
+/** A Claude notification Windows kept (claude_status.rs). */
+export interface ClaudeNotification {
+  at: number;
+  source: 'app' | 'chrome' | 'titled';
+  title: string;
+  message: string;
+}
+/** A Claude conversation the app or Chrome shows (claude_status.rs UI Automation). */
+export interface UiChat {
+  source: 'app' | 'chrome';
+  hwnd: number;
+  title: string;
+  ord: number;
+  state: 'running' | 'input' | 'done' | 'failed' | 'idle';
+  open: boolean;
+  unread: boolean;
+  chat: string;
+  step: number | null;
+  steps: number | null;
+}
+export interface UiScan {
+  chats: UiChat[];
+  sidebarOpen: boolean;
+  app: boolean;
+}
 export interface UsageScan {
   consumed: number;
   size: number;
@@ -353,6 +399,14 @@ export const native = {
   openUrl: (url: string) => call<boolean>('open_url', { url }, false),
   claudeResume: (sessionId: string, cwd: string, prompt: string | null, minimized: boolean) =>
     call<boolean>('claude_resume', { sessionId, cwd, prompt, minimized }, false),
+  transcriptWork: (path: string, offset: number, open: string[]) => call<WorkScan | null>('claude_transcript_work', { path, offset, open }, null),
+  claudeWorkflows: (projectsDir: string, sessions: string[], staleMs: number) =>
+    call<WorkflowRun[]>('claude_workflows', { projectsDir, sessions, staleMs }, []),
+  claudeTaskFinished: (sessionId: string, task: string) => call<boolean>('claude_task_finished', { sessionId, task }, false),
+  claudeStatusCmdlines: (pids: number[]) => call<Array<string | null>>('claude_status_cmdlines', { pids }, pids.map(() => null)),
+  claudeStatusNotifications: (afterMs: number) => call<ClaudeNotification[]>('claude_status_notifications', { afterMs }, []),
+  claudeStatusUiScan: () => call<UiScan | null>('claude_status_ui_scan', {}, null),
+  claudeStatusOpenChat: (title: string, ord: number) => call<boolean>('claude_status_open_chat', { title, ord }, false),
   claudeInject: (pid: number, text: string) => call<{ ok: boolean; error: string | null }>('claude_inject', { pid, text }, { ok: false, error: 'not available' }),
   selectTerminalTab: (title: string) => call<number | null>('claude_select_wt_tab', { title }, null),
   hooksStatus: () => call<HookStatus | null>('hooks_status', {}, null),

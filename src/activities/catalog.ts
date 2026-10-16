@@ -245,7 +245,7 @@ export const CATALOG: ActivityMeta[] = [
     mac: 'never',
     name: 'Claude Status',
     description:
-      'Every Claude session at a glance, from the Claude Sessions widget: Claude Code, the Claude app and Chrome, with progress bars for long runs. Needs the widget running (~/.claude/claude-status).',
+      'Every Claude session at a glance: Claude Code, the Claude app and Chrome, with purple background shells, unread dots and progress bars for long runs.',
     icon: 'claude',
     category: 'developer',
     enabled: false,

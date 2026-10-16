@@ -10,6 +10,8 @@ mod agenda;
 mod audio;
 mod chat;
 mod claude;
+#[cfg_attr(target_os = "macos", path = "mac/claude_status.rs")]
+mod claude_status;
 #[cfg_attr(target_os = "macos", path = "mac/dnd.rs")]
 mod dnd;
 mod fsx;
@@ -144,11 +146,18 @@ pub fn run() {
             fsx::known_folders,
             fsx::claude_transcript_meta,
             fsx::claude_usage_entries,
+            fsx::claude_transcript_work,
+            fsx::claude_workflows,
+            fsx::claude_task_finished,
             claude::claude_env,
             claude::claude_usage_fetch,
             claude::claude_resume,
             claude::claude_inject,
             claude::claude_select_wt_tab,
+            claude_status::claude_status_cmdlines,
+            claude_status::claude_status_notifications,
+            claude_status::claude_status_ui_scan,
+            claude_status::claude_status_open_chat,
             hooks::hooks_status,
             hooks::hooks_preview,
             hooks::hooks_write,
