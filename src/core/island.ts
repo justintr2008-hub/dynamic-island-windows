@@ -1040,10 +1040,12 @@ export class Island {
     // A merged card covers the pill: the light runs round the card's edge, not across its text.
     // Showing or still shrinking back: the light runs round the card until it lands.
     const merged = this.sheet.coversPill;
+    // An urgent card's light circles, unless its activity asks for a steady glow.
+    const urgentGlow: GlowSpec = want?.motion === 'still' ? { tone: want.tone, motion: 'still' } : { tone: want?.tone ?? 'accent', motion: 'orbit' };
     // Cut at once: fading, the pill's ring would show through the card as it grows.
     this.pillGlow.set(merged ? null : beamSpec(want), merged);
-    this.mergedGlow.set(merged ? (cardUrgent ? { tone: want?.tone ?? 'accent', motion: 'orbit' } : beamSpec(want)) : null);
-    this.cardGlow.set(cardUrgent && !merged ? { tone: want?.tone ?? 'accent', motion: 'orbit' } : null);
+    this.mergedGlow.set(merged ? (cardUrgent ? urgentGlow : beamSpec(want)) : null);
+    this.cardGlow.set(cardUrgent && !merged ? urgentGlow : null);
   }
 
   /**

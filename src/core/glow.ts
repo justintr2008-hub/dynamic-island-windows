@@ -5,6 +5,7 @@
 //   orbit     a comet with a fading tail circling the edge: busy (Claude thinking)
 //   pulse     the whole edge breathing: something is waiting on you
 //   progress  the edge filling up from the top: a timer, charging
+//   still     the whole edge softly lit, not moving: something just finished
 //
 // How it is drawn matters as much as how it looks. The island is a see-through
 // window the size of the screen, and anything that *repaints* inside it makes
@@ -19,7 +20,7 @@ import { reducedMotion } from './animator';
 import type { Rect } from './layout';
 import type { Tone } from './segments';
 
-export type GlowMotion = 'orbit' | 'pulse' | 'progress';
+export type GlowMotion = 'orbit' | 'pulse' | 'progress' | 'still';
 export type GlowSpeed = 'off' | 'slow' | 'medium' | 'fast';
 
 export interface GlowSpec {

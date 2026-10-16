@@ -43,6 +43,8 @@ export class ClaudeStatusActivity extends BaseActivity {
   private engine: StatusEngine | null = null;
   private busy = false;
   private last = new Map<string, StatusState>();
+  /** A session just finished (green), failed or was stopped (red), or needs you (orange): the island glows that colour for a moment. */
+  private flash: { tone: Tone; until: number } | null = null;
 
   constructor() {
     super('claudeStatus');
@@ -77,9 +79,11 @@ export class ClaudeStatusActivity extends BaseActivity {
     for (const r of rows) {
       const st = r.turn ?? r.state;
       const before = this.last.get(r.id);
-      // Stopping one yourself (Esc) is no news: it only turns red.
+      // Stopping one yourself (Esc) is no news: it only turns red, and glows red a moment.
+      if (before && before !== st && r.stopped) this.glow('bad');
       if (before && before !== st && !r.stopped && (st === 'input' || st === 'done' || st === 'failed')) {
         if (opts.showDone !== false && st !== 'input') this.ctx.surface({ key: `${r.id}:${st}`, ms: SHOW_MS, level: 'expanded' });
+        this.glow(st === 'done' ? 'good' : st === 'failed' ? 'bad' : 'warn');
         this.saw(st === 'done' ? 'claude-done' : st === 'failed' ? 'claude-error' : 'claude-asks', `claudeStatus:${r.id}`);
       }
     }
@@ -90,6 +94,11 @@ export class ClaudeStatusActivity extends BaseActivity {
       this.rows = rows;
       this.ctx.update();
     }
+  }
+
+  private glow(tone: Tone): void {
+    this.flash = { tone, until: Date.now() + SHOW_MS };
+    this.later(SHOW_MS + 50, () => this.ctx.update());
   }
 
   /** Waiting on you: a question, or a turn that failed (not one you stopped yourself). */
@@ -120,13 +129,16 @@ export class ClaudeStatusActivity extends BaseActivity {
       weight: running || shell || waiting || red ? 'foreground' : 'background',
       urgent: asking.length ? { key: asking.map((r) => `${r.id}@${r.since}`).join(','), level: 'expanded' } : null,
       summary: waiting ? `${waiting} awaiting you` : `${this.rows.length} Claude session${this.rows.length === 1 ? '' : 's'}`,
-      beam: waiting
-        ? { tone: 'warn', motion: 'pulse' }
-        : bar && barRow
-          ? { tone: barRow.state === 'shell' ? 'purple' : 'info', motion: 'progress', value: bar.value }
-          : running
-            ? { tone: 'info', motion: 'orbit' }
-            : null,
+      // Just finished, failed or stopped, or asking: the island glows that colour all round for a moment.
+      beam: this.flash && Date.now() < this.flash.until
+        ? { tone: this.flash.tone, motion: 'still' }
+        : waiting
+          ? { tone: 'warn', motion: 'pulse' }
+          : bar && barRow
+            ? { tone: barRow.state === 'shell' ? 'purple' : 'info', motion: 'progress', value: bar.value }
+            : running
+              ? { tone: 'info', motion: 'orbit' }
+              : null,
     };
   }
 
