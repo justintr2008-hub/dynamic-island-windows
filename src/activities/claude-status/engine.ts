@@ -145,11 +145,21 @@ export function rank(x: Item, now: number): [number, string] {
   return [isStale(x, now) ? DIMMED : ORDER[x.state] ?? 9, x.label.toLowerCase()];
 }
 
+/** Greens you haven't read yet (pink dot) lead the greens, newest finished first. */
+function unreadDone(x: Item, rk: number): boolean {
+  return rk === ORDER.done && x.unread;
+}
+
 export function sortItems(items: Item[], now: number): Item[] {
   return items.sort((a, b) => {
     const [ra, la] = rank(a, now);
     const [rb, lb] = rank(b, now);
-    return ra - rb || (la < lb ? -1 : la > lb ? 1 : 0);
+    if (ra !== rb) return ra - rb;
+    const ua = unreadDone(a, ra);
+    const ub = unreadDone(b, rb);
+    if (ua !== ub) return ua ? -1 : 1;
+    if (ua && a.since !== b.since) return b.since - a.since;
+    return la < lb ? -1 : la > lb ? 1 : 0;
   });
 }
 

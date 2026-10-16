@@ -233,6 +233,15 @@ describe('Claude Status: the rules (widget.pyw)', () => {
     const mixed = [item({ id: 'run', state: 'running' }), item({ id: 'red', state: 'failed', stopped: true }), item({ id: 'ask', state: 'input' })];
     labelItems(mixed);
     expect(sortItems(mixed, 1000).map((x) => x.id)).toEqual(['ask', 'red', 'run']);
+    // Unread greens (pink dot) come right under blue, the newest first; read greens follow by name.
+    const greens = [
+      item({ id: 'read', title: 'a read one', state: 'done', since: 990 }),
+      item({ id: 'old', title: 'b unread', state: 'done', since: 900, unread: true }),
+      item({ id: 'new', title: 'c unread', state: 'done', since: 950, unread: true }),
+      item({ id: 'run', title: 'z running', state: 'running' }),
+    ];
+    labelItems(greens);
+    expect(sortItems(greens, 1000).map((x) => x.id)).toEqual(['run', 'new', 'old', 'read']);
     expect(isStale(item({ state: 'done', since: 0 }), 601)).toBe(true);
     expect(normTitle('✳ Fix the build ')).toBe('fix the build');
   });
