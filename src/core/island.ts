@@ -24,6 +24,7 @@ import { accentColor, glassTint, migrate, TILE_SIZES, type Settings, type TileSi
 import { availableHere, platform } from './platform';
 import { mapActions, SheetRenderer, type Block, type SheetChip, type SheetView, type Tile } from './sheet';
 import { springs } from './spring';
+import { WheelGesture } from './wheel';
 import { clip, timeOfDay } from './format';
 
 type View = 'main' | 'overflow' | 'menu';
@@ -45,11 +46,6 @@ const GRID_ROWS = 4;
 const GRID_MIN_W = GRID_COLS * 90 + GRID_GAP * (GRID_COLS - 1) + GRID_PAD * 2;
 const atLeast = (a: Level, b: Level): Level => (levelIdx(a) >= levelIdx(b) ? a : b);
 
-/** How far one scroll gesture has to go before it switches activity, in px (a wheel notch is ~100). */
-const WHEEL_PX = 50;
-/** How long the wheel must be still before the next scroll can switch again. */
-const WHEEL_QUIET_MS = 200;
-
 export class Island {
   settings!: Settings;
   private area: Area = { width: 1280, height: 720 };
@@ -63,6 +59,8 @@ export class Island {
   private hover = false;
   private hoverTimer: ReturnType<typeof setTimeout> | undefined;
   private selected: string | null = null;
+  /** When the user picked `selected` (chip, wheel): such a pick outlasts a tap away. 0: an activity opened itself. */
+  private pickedAt = 0;
   private lastPrimary: string | null | undefined = undefined;
   private lastViewKey = '';
   private lastSig = '';
@@ -103,10 +101,8 @@ export class Island {
   private gridDrag: { key: string; snap: GridPages; dims: Map<string, { w: number; h: number }>; size: { w: number; h: number }; preview: GridPages | null } | null = null;
   /** Segment key under the pointer: tells whose card a hover asks for. */
   private hoverKey: string | null = null;
-  /** The scroll gesture in progress (wheelStep): when it last moved, how far, and whether it switched. */
-  private wheelAt = 0;
-  private wheelSum = 0;
-  private wheelSpent = false;
+  /** The scroll gesture in progress: one gesture switches one activity. */
+  private readonly wheel = new WheelGesture();
   /** Light on the pill's edge and on an urgent card's, in the tone of whatever is happening. */
   private readonly pillGlow: BorderGlow;
   /** The bot in its bubble beside the pill. */
@@ -380,6 +376,7 @@ export class Island {
         this.open = true;
         this.view = 'main';
         this.selected = id;
+        this.pickedAt = 0;
         this.schedule();
       },
       close: () => {
@@ -458,10 +455,11 @@ export class Island {
       order: order.indexOf(id),
     }));
     if (this.selected && !statuses.get(this.selected)?.active) this.selected = null;
-    const choice = choosePrimary(candidates, { selected: this.selected, surfaces: this.surfaces, now, dnd: this.settings.general.dnd });
+    const choice = choosePrimary(candidates, { selected: this.selected, pickedAt: this.pickedAt, surfaces: this.surfaces, now, dnd: this.settings.general.dnd });
     const primary = choice.primary;
     this.primaryId = primary;
-    this.visibleIds = choice.visible;
+    // Scrolling steps through a steady order: the primary-first one would only flip between two.
+    this.visibleIds = choice.ranked;
     const pStatus = primary ? statuses.get(primary) : undefined;
 
     // Level: resting compact, raised by events, hover, the user, or urgency.
@@ -1166,7 +1164,8 @@ export class Island {
     this.gridDrag = null;
     this.open = false;
     this.view = 'main';
-    this.selected = null;
+    // What the user picked stays on the pill; what an activity opened for itself goes.
+    if (!this.pickedAt) this.selected = null;
     this.surfaces = [];
     this.chatOpen = false;
     for (const [id, st] of this.statuses()) {
@@ -1247,11 +1246,14 @@ export class Island {
       case 'island:grid-cancel':
         this.gridAction(action, arg);
         break;
-      case 'island:wheel':
-        if (!this.wheelStep(Number(arg) || 0)) return;
+      case 'island:wheel': {
+        const dir = this.wheel.step(Number(arg) || 0, performance.now());        if (!dir) return;
+        this.cycle(dir);
         break;
+      }
       case 'island:select':
         this.selected = String(arg);
+        this.pickedAt = Date.now();
         this.view = 'main';
         // The card follows the pick, not the segment the pointer last crossed (a merged card hides the
         // pill's segments), even when an urgent activity keeps the pill.
@@ -1344,35 +1346,12 @@ export class Island {
     });
   }
 
-  /**
-   * One scroll gesture moves one activity. A touchpad or a smooth wheel sends dozens of
-   * small events per flick; they add up until the gesture is clearly meant (WHEEL_PX),
-   * switch once, and then the rest of that gesture, inertia included, is ignored until
-   * the wheel has been still for WHEEL_QUIET_MS. True when it switched.
-   */
-  private wheelStep(delta: number): boolean {
-    const now = performance.now();
-    const quiet = now - this.wheelAt > WHEEL_QUIET_MS;
-    this.wheelAt = now;
-    if (quiet) {
-      this.wheelSum = 0;
-      this.wheelSpent = false;
-    }
-    if (this.wheelSpent || !delta) return false;
-    // Turning back mid-gesture starts the count again.
-    if (Math.sign(delta) !== Math.sign(this.wheelSum)) this.wheelSum = 0;
-    this.wheelSum += delta;
-    if (Math.abs(this.wheelSum) < WHEEL_PX) return false;
-    this.wheelSpent = true;
-    this.cycle(Math.sign(this.wheelSum));
-    return true;
-  }
-
   private cycle(dir: number): void {
     const ids = this.visibleIds;
     if (ids.length < 2) return;
     const i = Math.max(0, ids.indexOf(this.primaryId ?? ''));
     this.selected = ids[(i + dir + ids.length) % ids.length];
+    this.pickedAt = Date.now();
   }
 
   private tick(): void {

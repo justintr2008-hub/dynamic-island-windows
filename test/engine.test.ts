@@ -171,6 +171,24 @@ describe('priority', () => {
     const noInterrupt = cand('timer', { urgent: { key: 'done', level: 'maximum' } }, 'low', 5, { interrupt: false });
     expect(choosePrimary([music, noInterrupt], { selected: null, surfaces: [], now: 1000, dnd: false }).urgent).toBe(false);
   });
+
+  it("a picked activity keeps the pill; only an event newer than the pick shows over it", () => {
+    const music = cand('music', {}, 'high', 0);
+    const download = cand('downloads', {}, 'medium', 1);
+    const old = [{ id: 'music', key: 'song', until: 9000, level: 'expanded' as const, at: 500 }];
+    const fresh = [{ id: 'music', key: 'song', until: 9000, level: 'expanded' as const, at: 2000 }];
+    expect(choosePrimary([music, download], { selected: 'downloads', pickedAt: 1000, surfaces: [], now: 3000, dnd: false }).primary).toBe('downloads');
+    expect(choosePrimary([music, download], { selected: 'downloads', pickedAt: 1000, surfaces: old, now: 3000, dnd: false }).primary).toBe('downloads');
+    expect(choosePrimary([music, download], { selected: 'downloads', pickedAt: 1000, surfaces: fresh, now: 3000, dnd: false }).primary).toBe('music');
+  });
+
+  it('scrolling steps through every activity in one steady order, whichever is picked', () => {
+    const all = [cand('music', {}, 'high', 0), cand('claudeStatus', {}, 'high', 1), cand('downloads', {}, 'medium', 2)];
+    const ranked = (selected: string | null) => choosePrimary(all, { selected, pickedAt: 1, surfaces: [], now: 2, dnd: false }).ranked;
+    expect(ranked(null)).toEqual(['music', 'claudeStatus', 'downloads']);
+    expect(ranked('claudeStatus')).toEqual(ranked(null));
+    expect(ranked('downloads')).toEqual(ranked(null));
+  });
 });
 
 describe('settings migration', () => {
