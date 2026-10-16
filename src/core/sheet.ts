@@ -98,7 +98,7 @@ export type Block =
    * wave on top, a scrubber with times, then big transport buttons. `seek`
    * fires with the clicked spot (0..1) when the scrubber is clicked.
    */
-  | { t: 'player'; key: string; art: string | null; title: string; artist: string; playing: boolean; position: number | null; duration: number | null; color?: string; seek?: string; buttons: SheetButton[]; chips?: SheetChip[] }
+  | { t: 'player'; key: string; art: string | null; title: string; artist: string; playing: boolean; position: number | null; duration: number | null; color?: string; seek?: string; /** Clicking the art: brings the player forward. */ open?: string; buttons: SheetButton[]; chips?: SheetChip[] }
   /**
    * The Control Center grid. `items` already know where they sit (the island
    * packed them); `tray` holds the ones taken off the grid, shown while editing.
@@ -177,7 +177,7 @@ export function mapActions(blocks: Block[], fn: (action: string) => string): Blo
       case 'tiles':
         return { ...b, items: b.items.map((t) => ({ ...t, action: t.action ? fn(t.action) : undefined, body: body(t.body) })) };
       case 'player':
-        return { ...b, buttons: b.buttons.map(btn), seek: b.seek ? fn(b.seek) : undefined };
+        return { ...b, buttons: b.buttons.map(btn), seek: b.seek ? fn(b.seek) : undefined, open: b.open ? fn(b.open) : undefined };
       default:
         return b;
     }
@@ -1140,6 +1140,9 @@ export class SheetRenderer {
         art.append(img);
       } else art.innerHTML = icon('music');
     }
+    if (b.open) this.bind(art, b.open, null);
+    else delete art.dataset.action;
+    art.classList.toggle('openable', Boolean(b.open));
     e.querySelector('.p1')!.textContent = b.title;
     e.querySelector('.p2')!.textContent = b.artist;
     const wave = e.querySelector<HTMLElement>('.seg-bars')!;

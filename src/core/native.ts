@@ -365,7 +365,7 @@ export const native = {
   hookReply: (requestId: string, reply: string) => call<boolean>('hook_reply', { requestId, reply }, false),
 
   mediaState: () => call<MediaState | null>('media_state', {}, null),
-  mediaControl: (action: 'toggle' | 'play' | 'pause' | 'next' | 'prev' | 'seek', value?: number) => call<boolean>('media_control', { action, value: value ?? null }, false),
+  mediaControl: (action: 'toggle' | 'play' | 'pause' | 'next' | 'prev' | 'seek' | 'focus', value?: number) => call<boolean>('media_control', { action, value: value ?? null }, false),
   /** Music bars: tap the speakers for bass-to-treble levels ('spectrum' events, five 0..1 numbers). */
   spectrumWatch: (on: boolean) => call('spectrum_watch', { on }, undefined),
   audioState: () => call<AudioState | null>('audio_state', {}, null),

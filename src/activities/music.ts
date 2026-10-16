@@ -174,6 +174,7 @@ export class MusicActivity extends BaseActivity {
           duration: m.duration,
           color: artColor(m.thumbnail, () => this.ctx.update()) ?? undefined,
           seek: env.interactive && m.duration ? 'seek' : undefined,
+          open: env.interactive ? 'open' : undefined,
           buttons,
         },
       ],
@@ -209,6 +210,11 @@ export class MusicActivity extends BaseActivity {
       this.apply({ ...m, position: to, updatedAt: Date.now() });
       if (!native.demo) await native.mediaControl('seek', to);
       setTimeout(() => void native.mediaState().then((s) => s && this.apply(s)), 350);
+      return;
+    }
+    if (name === 'open') {
+      // The tab or app it's playing in; the island closes as that window comes forward.
+      if (!native.demo) await native.mediaControl('focus');
       return;
     }
     if (name !== 'toggle' && name !== 'next' && name !== 'prev') return;
