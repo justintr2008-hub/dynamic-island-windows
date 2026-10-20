@@ -273,6 +273,7 @@ export const CATALOG: ActivityMeta[] = [
     behavior: B(true, true, true, true),
     options: [
       { key: 'showDone', type: 'toggle', label: 'Pop up when a session finishes', help: 'Shows the island for a moment when a session is done or fails. One that needs you (orange) always opens it, until you answer or tap away.', default: true },
+      { key: 'showAutoModel', type: 'toggle', label: 'Show Auto model button', help: 'Shows the Auto model on/off button when the island expands. Auto model warns you before a prompt runs on a far too strong or too weak Claude model.', default: true },
     ],
   },
   {

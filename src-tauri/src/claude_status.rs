@@ -499,6 +499,30 @@ pub async fn claude_status_open_chat(title: String, ord: u32) -> bool {
     tauri::async_runtime::spawn_blocking(move || with_uia(|a| open_chat(a, &title, ord)).unwrap_or(false)).await.unwrap_or(false)
 }
 
+/// The model router's kill switch: an empty `off` file next to its hook (~/.claude/model-router).
+fn router_off_file() -> Option<std::path::PathBuf> {
+    std::env::var_os("USERPROFILE").map(|h| std::path::PathBuf::from(h).join(".claude").join("model-router").join("off"))
+}
+
+/// Whether the model router is on (no `off` file).
+#[tauri::command]
+pub fn claude_router_get() -> bool {
+    router_off_file().is_none_or(|p| !p.exists())
+}
+
+/// Turns the model router on or off for every session; returns the new state.
+#[tauri::command]
+pub fn claude_router_set(on: bool) -> bool {
+    if let Some(p) = router_off_file() {
+        if on {
+            let _ = std::fs::remove_file(&p);
+        } else {
+            let _ = std::fs::write(&p, "");
+        }
+    }
+    claude_router_get()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -42,6 +42,8 @@ export class ClaudeStatusActivity extends BaseActivity {
   private rows: StatusRow[] = [];
   private engine: StatusEngine | null = null;
   private busy = false;
+  /** The model router (~/.claude/model-router) is on; its toggle sits in the card's header. */
+  private routerOn = true;
   private last = new Map<string, StatusState>();
   /** A session just finished (green), failed or was stopped (red), or needs you (orange): the island glows that colour for a moment. */
   private flash: { tone: Tone; until: number } | null = null;
@@ -71,6 +73,11 @@ export class ClaudeStatusActivity extends BaseActivity {
       this.busy = false;
     }
     if (!this.alive) return;
+    const routerOn = await native.routerOn();
+    if (routerOn !== this.routerOn) {
+      this.routerOn = routerOn;
+      this.ctx.update();
+    }
 
     // A session that just finished pops the island for a moment; one waiting on
     // you holds it open instead (status().urgent).
@@ -206,6 +213,16 @@ export class ClaudeStatusActivity extends BaseActivity {
         tone: 'claude',
         title: 'Claude',
         sub: waiting ? `${waiting} awaiting you` : `${this.rows.length} session${this.rows.length === 1 ? '' : 's'}`,
+        // Settings > Claude Status > "Show Auto model button" hides it.
+        buttons: this.ctx.options<{ showAutoModel?: boolean }>().showAutoModel === false ? [] : [
+          {
+            key: 'router',
+            label: this.routerOn ? 'Auto model: on' : 'Auto model: off',
+            action: 'router',
+            style: this.routerOn ? 'secondary' : 'ghost',
+            tip: 'Warns you before a prompt runs on a far too strong or too weak Claude model',
+          },
+        ],
       },
     ];
     // Each row carries its progress bar on its second line, after "Terminal · running 6m".
@@ -226,6 +243,11 @@ export class ClaudeStatusActivity extends BaseActivity {
   }
 
   async action(name: string, arg: unknown): Promise<void> {
+    if (name === 'router') {
+      this.routerOn = await native.setRouter(!this.routerOn);
+      this.ctx.update();
+      return;
+    }
     if (!this.engine || typeof arg !== 'string') return;
     if (name === 'dismiss') {
       this.engine.dismiss(arg);

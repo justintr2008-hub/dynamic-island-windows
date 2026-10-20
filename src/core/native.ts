@@ -391,6 +391,8 @@ export const native = {
       { home: '', downloads: '', desktop: '', pictures: '', screenshots: [], appData: '', localAppData: '', islandData: '' },
     ),
 
+  routerOn: () => call<boolean>('claude_router_get', {}, true),
+  setRouter: (on: boolean) => call<boolean>('claude_router_set', { on }, on),
   claudeEnv: () =>
     call<ClaudeEnv | null>('claude_env', {}, null),
   transcriptMeta: (path: string, offset: number, needUser: boolean) => call<TranscriptMeta | null>('claude_transcript_meta', { path, offset, needUser }, null),

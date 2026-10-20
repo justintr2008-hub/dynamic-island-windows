@@ -158,6 +158,8 @@ pub fn run() {
             claude_status::claude_status_notifications,
             claude_status::claude_status_ui_scan,
             claude_status::claude_status_open_chat,
+            claude_status::claude_router_get,
+            claude_status::claude_router_set,
             hooks::hooks_status,
             hooks::hooks_preview,
             hooks::hooks_write,
