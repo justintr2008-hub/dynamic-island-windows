@@ -12,7 +12,7 @@ import { levelWidth, normalizeWidths, type Anchor, type Level } from './core/lay
 import { isTauri, native, on, sendTo, type MonitorInfo } from './core/native';
 import { availableHere, ctrlKey, optionHere, platform, thisComputer, unavailableReason } from './core/platform';
 import { springAnimate } from './core/renderer';
-import { ACCENTS, cloneSettings, migrate, type ActivityConfig, type Settings } from './core/settings';
+import { ACCENTS, cloneSettings, growsOf, migrate, type ActivityConfig, type Settings } from './core/settings';
 import { springs } from './core/spring';
 import { h } from './dom';
 import { modelPicker } from './models-ui';
@@ -144,6 +144,46 @@ function stacked(r: HTMLElement): HTMLElement {
   return r;
 }
 
+/** Every gesture and key the island answers to, in one place (Settings > Controls). */
+function controlsSection(mac: boolean): HTMLElement {
+  const ctrl = ctrlKey();
+  const g = settings.general;
+  const group = (title: string, items: Array<[string, string]>) => [
+    h('h3', { class: 'ctl-head', text: title }),
+    ...items.map(([how, what]) => h('div', { class: 'ctl-row' }, [h('span', { class: 'ctl-how', text: how }), h('span', { class: 'ctl-what', text: what })])),
+  ];
+  return section('Controls', [
+    ...group('On the island', [
+      ['Hover', 'Shows more: a card grows out of it, or it widens (Settings › When pointed at).'],
+      ['Left click', 'Opens your Control Center. Click again to close it.'],
+      ['Right click', 'Menu: Activities, Settings, Quiet and Hide.'],
+      ['Scroll', 'Switches to the next or previous activity.'],
+      [`Tap ${ctrl} over it`, 'Peek: it fades and your clicks go through to what is behind, until you move away.'],
+      ['Click a chip', 'Brings that activity to the front (the small icons and numbers beside the main one).'],
+      ['Click outside, or Esc', 'Closes whatever is open and shrinks it back.'],
+    ]),
+    ...group('Hide and show', [
+      ['Right click › Hide', `Hides it like the ${ctrl} peek, but it stays hidden.`],
+      ['Right click › Show', 'Right-click where the island was, then press Show.'],
+    ]),
+    ...group('In the Control Center', [
+      ['Long-press a tile', 'Edit mode: drag tiles to move them, drag a corner to resize, hide the ones you do not want.'],
+      ['Scroll', 'Goes to the next page of tiles.'],
+      ['Click a tile', 'Runs it: mute the speakers, play and pause, start a timer.'],
+    ]),
+    ...group('In activities', [
+      ['Click the album art', 'Jumps to the app that is playing.'],
+      ['Timer: scroll a box', 'Scroll down to add, up to take away, over hours, minutes or seconds.'],
+      ['Timer: click a box', 'Type the time yourself, HH MM SS. Enter sets it.'],
+    ]),
+    ...group('Keyboard', [
+      [g.toggleHotkey || 'not set', 'Opens or closes the island.'],
+      [g.activitiesHotkey || 'not set', 'Opens Activities.'],
+      ...(mac ? [] : ([['Alt+Shift+1–9', 'Switches to a Claude Code session.'], ['Alt+Shift+0', 'Jumps to the session that needs you.']] as Array<[string, string]>)),
+    ]),
+  ]);
+}
+
 function section(title: string, kids: Node[]): HTMLElement {
   return h('section', { class: 'card section' }, [h('h2', { text: title }), ...kids]);
 }
@@ -231,6 +271,8 @@ function cardBody(meta: ActivityMeta): HTMLElement {
           c[key] = !c[key];
           (e.currentTarget as HTMLElement).classList.toggle('on', c[key]);
           save(true);
+          // The Grows row is only there while Persistent is on.
+          if (key === 'persistent') render();
         },
       }),
     );
@@ -238,6 +280,13 @@ function cardBody(meta: ActivityMeta): HTMLElement {
   const body = h('div', { class: 'act-body' }, [
     h('div', { class: 'body-row' }, [h('span', { class: 'label', text: 'Priority' }), segmented(c.priority, [['high', 'High'], ['medium', 'Medium'], ['low', 'Low']], (v) => { c.priority = v; c.enabled = true; save(true); flipRender(); })]),
     h('div', { class: 'body-row' }, [h('span', { class: 'label', text: 'Behavior' }), chips]),
+    // Pointing at a persistent activity: widen the pill, or grow a card out of it like now playing.
+    c.persistent
+      ? h('div', { class: 'body-row' }, [
+          h('span', { class: 'label', text: 'Grows' }),
+          segmented(growsOf(c, settings.island.defaultGrows), [['wide', 'Sideways'], ['card', 'Into a card']], (v) => { c.grows = v; save(true); render(); }),
+        ])
+      : null,
     // Local AI's model is picked in its panel below, not typed; System Stats' picks live in its table.
     ...meta.options
       .filter((o) => optionHere(o) && !(meta.id === 'local' && o.key === 'model') && !(meta.id === 'system' && SYSTEM_TABLE_KEYS.has(o.key)))
@@ -813,6 +862,7 @@ function settingsPage(): HTMLElement {
       row('Distance from the edge', 'Gap between the island and its screen edge.', edge),
       row('When nothing is happening', null, segmented(i.idle, [['pill', 'Small pill'], ['hidden', 'Tuck away']], (v) => { i.idle = v; save(true); render(); })),
       row('Reduce motion', 'Springs jump straight to their end.', segmented(i.reduceMotion, [['system', 'System'], ['on', 'On'], ['off', 'Off']], (v) => { i.reduceMotion = v; save(true); render(); })),
+      row('When pointed at', 'How an activity grows when you point at it. Each one can override this in Activities.', segmented(i.defaultGrows, [['wide', 'Sideways'], ['card', 'Into a card']], (v) => { i.defaultGrows = v; save(true); render(); })),
       row('Hover card', 'What shows under the island when you point at it.', segmented(i.hoverCard, [['pointer', 'What you point at'], ['claude', 'Claude stats']], (v) => { i.hoverCard = v; save(true); render(); })),
       row('Border glow', 'Light that circles the pill while something works; orange is Claude. Off saves the most battery.', segmented(i.glow, [['off', 'Off'], ['slow', 'Slow'], ['medium', 'Medium'], ['fast', 'Fast']], (v) => { i.glow = v; save(true); render(); })),
     ]),
@@ -843,6 +893,7 @@ function settingsPage(): HTMLElement {
       // Claude Code comes to the Mac in part 2, its session keys with it.
       ...(mac ? [] : [h('p', { class: 'muted', text: 'Claude Code sessions: Alt+Shift+1–9 switches, Alt+Shift+0 jumps to the one that needs you (Activities › Claude Code).' })]),
     ]),
+    controlsSection(mac),
     section('Privacy', [
       row('Show what you copied', 'Off: the Clipboard activity only says "Copied". Password managers are always skipped.', toggle(s.privacy.clipboardContent, (v) => { s.privacy.clipboardContent = v; save(true); })),
       row('Screenshot thumbnails', null, toggle(s.privacy.screenshotPreview, (v) => { s.privacy.screenshotPreview = v; save(true); })),

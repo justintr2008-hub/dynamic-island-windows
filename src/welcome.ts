@@ -12,7 +12,7 @@ import { native } from './core/native';
 import { applyPlan, glanceChoices, planActivities, previewCells, suggestGlance, USES, type Facts, type Plan, type Use } from './core/onboarding';
 import { platform, thisComputer } from './core/platform';
 import { springAnimate } from './core/renderer';
-import { cloneSettings, type Settings } from './core/settings';
+import { cloneSettings, type Grows, type Settings } from './core/settings';
 import { springs } from './core/spring';
 import { h } from './dom';
 import { downloadingName, modelPicker, type PickerHost } from './models-ui';
@@ -25,7 +25,7 @@ export interface WelcomeHost {
   done(): void;
 }
 
-const STEPS = ['hello', 'uses', 'glance', 'ai', 'done'] as const;
+const STEPS = ['hello', 'uses', 'glance', 'grows', 'ai', 'done'] as const;
 type Step = (typeof STEPS)[number];
 
 /** Where the flow is. Kept outside the page so a redraw of the window keeps the answers. */
@@ -37,6 +37,8 @@ const flow = {
   /** The uses the ticks were suggested from: change the uses and they are suggested again. */
   suggestedFor: '',
   city: null as string | null,
+  /** The third question: how activities grow when pointed at; null until shown (it starts from the saved default). */
+  grows: null as Grows | null,
   /** A Local AI model was picked, or one already answers. */
   ai: false,
   facts: null as Facts | null,
@@ -107,6 +109,7 @@ function move(by: number): void {
   flow.step = Math.max(0, Math.min(STEPS.length - 1, flow.step + by));
   const step = STEPS[flow.step];
   if (step === 'glance') suggest();
+  if (step === 'grows' && !flow.grows) flow.grows = current?.host.settings().island.defaultGrows ?? 'card';
   if (step === 'ai') void checkModel();
   paint(true);
 }
@@ -135,7 +138,9 @@ function currentPlan(): Plan {
 
 function finish(host: WelcomeHost): void {
   const city = flow.city ?? '';
-  host.save(applyPlan(host.settings(), currentPlan(), city));
+  const next = applyPlan(host.settings(), currentPlan(), city);
+  if (flow.grows) next.island.defaultGrows = flow.grows;
+  host.save(next);
   reset();
   host.done();
 }
@@ -149,7 +154,7 @@ function skip(host: WelcomeHost): void {
 }
 
 function reset(): void {
-  Object.assign(flow, { step: 0, glance: null, suggestedFor: '', city: null, ai: false });
+  Object.assign(flow, { step: 0, glance: null, suggestedFor: '', city: null, ai: false, grows: null });
   flow.uses.clear();
 }
 
@@ -180,6 +185,33 @@ function content(step: Step, host: WelcomeHost): Node[] {
         ticks.has('weather') ? cityField() : null,
       ].filter((n): n is HTMLElement => n != null);
     }
+    case 'grows': {
+      const pick = (v: Grows, title: string, sub: string, art: HTMLElement) => {
+        const on = (flow.grows ?? host.settings().island.defaultGrows) === v;
+        const el = h('button', { class: `w-grow${on ? ' on' : ''}`, 'aria-pressed': String(on) }, [
+          art,
+          h('span', { class: 'w-grow-text' }, [h('b', { text: title }), h('span', { text: sub })]),
+          h('span', { class: 'w-tick', html: icon('check') }),
+        ]);
+        el.addEventListener('click', () => {
+          flow.grows = v;
+          for (const o of Array.from(el.parentElement!.children)) {
+            o.classList.toggle('on', o === el);
+            o.setAttribute('aria-pressed', String(o === el));
+          }
+          springAnimate(el, [{ transform: 'scale(0.98)' }, { transform: 'none' }], springs.bouncy);
+        });
+        return el;
+      };
+      return [
+        h('h1', { text: 'How should the island grow?' }),
+        h('p', { class: 'lead', text: 'When you point at it, the island shows more. Pick how. You can change it for everything in Settings, or for one activity in Activities.' }),
+        h('div', { class: 'w-grows' }, [
+          pick('card', 'Into a card', 'A card grows out of the pill, like the iPhone: a player, a list, a bar.', growArt('card')),
+          pick('wide', 'Sideways', 'The pill stretches wider and shows a bit more in a line.', growArt('wide')),
+        ]),
+      ];
+    }
     case 'ai':
       return [
         h('h1', { text: `Your own AI, on ${thisComputer()}` }),
@@ -189,6 +221,28 @@ function content(step: Step, host: WelcomeHost): Node[] {
     case 'done':
       return done(host);
   }
+}
+
+/** A small drawing of the island pointed at, so the two ways can be compared. */
+function growArt(kind: Grows): HTMLElement {
+  const bars = () => h('span', { class: 'ga-bars' }, [h('i'), h('i'), h('i')]);
+  const line = (w: string) => {
+    const l = h('i', { class: 'ga-line' });
+    l.style.width = w;
+    return l;
+  };
+  if (kind === 'wide') {
+    return h('div', { class: 'w-grow-art', 'aria-hidden': 'true' }, [
+      h('div', { class: 'ga-pill' }, [h('span', { class: 'ga-ico', html: icon('music') }), line('54px'), h('span', { class: 'ga-chip', html: icon('play') }), h('span', { class: 'ga-chip', html: icon('forward') }), bars()]),
+    ]);
+  }
+  return h('div', { class: 'w-grow-art', 'aria-hidden': 'true' }, [
+    h('div', { class: 'ga-card' }, [
+      h('div', { class: 'ga-top' }, [h('span', { class: 'ga-art' }), h('div', { class: 'ga-meta' }, [line('70px'), line('44px')]), bars()]),
+      h('div', { class: 'ga-scrub' }, [h('i')]),
+      h('div', { class: 'ga-btns' }, [h('span', { html: icon('rewind') }), h('span', { class: 'play', html: icon('play') }), h('span', { html: icon('forward') })]),
+    ]),
+  ]);
 }
 
 function hello(): Node[] {

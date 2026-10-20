@@ -13,7 +13,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
+use tauri::{AppHandle, Emitter, Listener, Manager, PhysicalPosition, PhysicalSize, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 #[cfg(windows)]
 use windows::Win32::Foundation::{HWND, POINT};
 #[cfg(windows)]
@@ -270,6 +270,15 @@ pub fn spawn_poll(app: AppHandle, state: Arc<Overlay>) {
         let mut was_ctrl = false;
         // Peek behind: the island fades and lets the mouse through until the pointer leaves it.
         let mut peeking = false;
+        // The right-click menu's "Hide": the island stays faded and click-through, like a peek that never
+        // ends, until a right click on it (it turns the hold off and opens the menu, whose button then says Show)
+        // or the menu's Show. The page sends "island-hold" with true or false.
+        let hold = Arc::new(AtomicBool::new(false));
+        let mut was_held = false;
+        {
+            let hold = hold.clone();
+            app.listen_any("island-hold", move |e| hold.store(e.payload() == "true", Ordering::Relaxed));
+        }
         // A pointer far from the island cannot reach it within a frame or two, so
         // the loop idles at 10 Hz out there and only runs hot near the island.
         let mut period = Duration::from_millis(FAR_POLL_MS);
@@ -360,13 +369,15 @@ pub fn spawn_poll(app: AppHandle, state: Arc<Overlay>) {
             #[cfg(target_os = "macos")]
             let ctrl = crate::mac::input::control_down();
             let peek_on = state.peek_enabled.load(Ordering::Relaxed);
-            if peek_on && !peeking && on_island && ctrl && !was_ctrl {
+            let held = hold.load(Ordering::Relaxed);
+            if !peeking && (held || (peek_on && on_island && ctrl && !was_ctrl)) {
                 peeking = true;
                 let _ = app.emit_to(LABEL, "peek", true);
-            } else if peeking && (!peek_on || gap > PEEK_LEAVE_PX) {
+            } else if peeking && ((was_held && !held) || (!held && (!peek_on || gap > PEEK_LEAVE_PX))) {
                 peeking = false;
                 let _ = app.emit_to(LABEL, "peek", false);
             }
+            was_held = held;
             was_ctrl = ctrl;
 
             let accept = on_island && !peeking;
@@ -382,6 +393,11 @@ pub fn spawn_poll(app: AppHandle, state: Arc<Overlay>) {
             let ((left, left_hit), (right, right_hit)) = clicks.poll();
             if !accept && (left_hit || right_hit || (left && !was_left) || (right && !was_right)) {
                 let _ = app.emit_to(LABEL, "pointer-outside", PointerOutside { button: if left { "left" } else { "right" } });
+            }
+            // A right click on the hidden island brings it back with its menu, so Show is at hand.
+            if held && on_island && right && !was_right {
+                hold.store(false, Ordering::Relaxed);
+                let _ = app.emit_to(LABEL, "hold-menu", ());
             }
             was_left = left;
             was_right = right;

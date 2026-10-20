@@ -33,6 +33,7 @@ import { ScreenshotsActivity } from '../src/activities/screenshots';
 import { ServersActivity } from '../src/activities/servers';
 import { SoundActivity } from '../src/activities/sound';
 import { SystemActivity } from '../src/activities/system';
+import { TimerActivity } from '../src/activities/timer';
 import { WeatherActivity } from '../src/activities/weather';
 
 const T0 = Date.parse('2026-09-30T12:00:00Z');
@@ -92,6 +93,7 @@ async function boot<T extends Activity>(act: T, options: Record<string, unknown>
     isPrimary: () => true,
     notify: (...a) => void calls.notify.push(a),
     log: (...a) => void calls.log.push(a),
+    setOptions: (patch) => void Object.assign(options, patch),
   };
   await act.start(ctx);
   await tick(0);
@@ -207,6 +209,29 @@ describe('battery', () => {
   });
 });
 
+describe('timer', () => {
+  it('the dial sets the length in seconds, and Start uses it', async () => {
+    const { act, options } = await boot(new TimerActivity());
+    const tileEnv = { reason: 'open' as const, now: Date.now(), width: 300, vertical: false, interactive: true, surfaced: null };
+    const body = () => act.tile(tileEnv)!.body;
+    expect(body()).toMatchObject({ k: 'actions', dial: { seconds: 300, action: 'length', start: { action: 'start-secs' } } });
+    // Focus and stopwatch stay; the quick 5m button gives way to the dial's Start.
+    expect(body().k === 'actions' && body().buttons.map((b) => b.key)).toEqual(['focus', 'sw']);
+
+    act.action('length', 5430); // 1:30:30
+    expect(options.timerSeconds).toBe(5430);
+    expect(body()).toMatchObject({ dial: { seconds: 5430 } });
+    expect(act.home().find((s) => s.key === 'start5')).toMatchObject({ label: '1h 30m 30s', arg: 5430 });
+    act.action('length', 999999);
+    expect(options.timerSeconds).toBe(86399);
+
+    act.action('start-secs', 0); // an empty dial starts nothing
+    expect(act.status().active).toBe(false);
+    act.action('start-secs', 90);
+    expect(act.status()).toMatchObject({ active: true, summary: '1m 30s timer 1:30' });
+  });
+});
+
 describe('sound', () => {
   const audio = (over: Record<string, unknown> = {}) => ({ volume: 0.5, muted: false, device: 'Speakers (Realtek)', deviceId: 'a', micMuted: false, micDevice: 'Mic', ...over });
 
@@ -228,6 +253,11 @@ describe('sound', () => {
     expect(calls.surface.at(-1)).toMatchObject({ key: 'volume' });
     expect(act.render(env('compact')).find((s) => s.t === 'icon')).toMatchObject({ icon: 'speaker-mute' });
     expect(act.render(env('maximum')).filter((s) => s.t === 'button').map((s) => s.key)).toEqual(['down', 'mute', 'up']);
+    const tileEnv = { reason: 'open' as const, now: Date.now(), width: 300, vertical: false, interactive: true, surfaced: null };
+    const body = act.tile!(tileEnv)!.body;
+    expect(body.k === 'stat' && body.buttons?.map((b) => b.action)).toEqual(['vol-down', 'vol-up']);
+    const quiet = act.tile!({ ...tileEnv, interactive: false })!.body;
+    expect(quiet.k === 'stat' && quiet.buttons).toBeUndefined();
 
     emit('audio', audio({ volume: 0.4, deviceId: 'b', device: 'AirPods Pro' }));
     expect(calls.surface.at(-1)).toMatchObject({ key: 'device', ms: 3500 });

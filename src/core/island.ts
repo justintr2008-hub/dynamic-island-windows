@@ -15,13 +15,15 @@ import { PetBrain, type PetSignal } from './pet';
 import { BorderGlow, type GlowSpec } from './glow';
 import { CELLS, hiddenTest, leadFirst, moveTile, pageCount, rowsUsed, settle, sizeOf, unhide, withNew, type GridDims, type GridPages, type GridSlot } from './grid';
 import { bubbleRect, bubbleSize, chatBarRect, innerPadding, LEVELS, orientationFor, pillRect, pillSize, tuckedRect, union, type Anchor, type Area, type Level, type Orientation, type Rect } from './layout';
-import { native, on, sendTo, type MenuItem } from './native';
+import { isTauri, native, on, sendTo, type MenuItem } from './native';
 import { choosePrimary, type Candidate, type Choice as Picked, type Surface } from './priority';
 import type { MirrorFrame } from './mirror';
 import { PillRenderer } from './renderer';
 import { fitSegments, fitVertical, signature, type Placed, type Seg } from './segments';
-import { accentColor, glassTint, migrate, TILE_SIZES, type Settings, type TileSize } from './settings';
-import { availableHere, platform } from './platform';
+import { accentColor, glassTint, growsOf, migrate, TILE_SIZES, type Settings, type TileSize } from './settings';
+import { tileCard } from './tilecard';
+import { emit } from '@tauri-apps/api/event';
+import { availableHere, ctrlKey, platform } from './platform';
 import { mapActions, SheetRenderer, type Block, type SheetChip, type SheetView, type Tile } from './sheet';
 import { springs } from './spring';
 import { WheelGesture } from './wheel';
@@ -57,6 +59,10 @@ export class Island {
   private readonly contexts = new Map<string, ActivityContext>();
   private surfaces: Surface[] = [];
   private view: View = 'main';
+  /** Hidden from the right-click menu: faded and click-through until its Show (overlay.rs holds it). */
+  private userHidden = false;
+  /** Whether Rust is holding the hide right now (it lets go for a right click, which opens the menu). */
+  private holdOn = false;
   private open = false;
   private hover = false;
   private hoverTimer: ReturnType<typeof setTimeout> | undefined;
@@ -170,6 +176,13 @@ export class Island {
     await on<{ monitor: string; fullscreen: string | null; pid: number }>('foreground', (fg) => this.onForeground(fg));
     await on('pointer-outside', () => this.dismiss());
     await on<boolean>('peek', (on) => this.onPeek(on));
+    // A right click on the hidden island (Rust let go of the hold): its menu, with Show.
+    await on('hold-menu', () => {
+      this.holdOn = false;
+      this.view = 'menu';
+      this.open = false;
+      this.schedule();
+    });
     // The bot's eyes follow the pointer while Rust sees it near the island (the preview has no Rust).
     await on<{ x: number; y: number } | null>('pointer', (p) => this.bubble.lookAt(p));
     if (native.demo) window.addEventListener('pointermove', (e) => this.bubble.lookAt({ x: e.clientX, y: e.clientY }));
@@ -446,6 +459,7 @@ export class Island {
 
   private compose(immediate: boolean): void {
     if (!this.settings) return;
+    this.syncHold();
     const now = Date.now();
     const s = this.settings.island;
     const statuses = this.statuses();
@@ -695,25 +709,14 @@ export class Island {
   }
 
   private menuSegments(): Seg[] {
-    const a = this.settings.island.anchor;
-    const pos = (anchor: Anchor, iconName: string, tip: string): Seg => ({
-      t: 'button',
-      key: `menu/${anchor}`,
-      icon: iconName,
-      action: 'island:anchor',
-      arg: anchor,
-      style: a === anchor ? 'primary' : 'ghost',
-      tip,
-      prio: 1,
-    });
     return [
-      { t: 'text', key: 'menu/label', text: 'Position', tone: 'muted', size: 'sm', prio: 3 },
-      pos('top', 'pos-top', 'Top centre'),
-      pos('right', 'pos-right', 'Right centre'),
-      pos('bottom', 'pos-bottom', 'Bottom centre'),
-      pos('left', 'pos-left', 'Left centre'),
+      // Like tapping Ctrl over the island (it fades, clicks go through), but it stays that way until Show:
+      // right-click the island again and the menu comes back with this button saying Show.
+      this.userHidden
+        ? { t: 'button', key: 'menu/hide', icon: 'eye', label: 'Show', action: 'island:hide', style: 'primary', tip: 'Bring the island back', prio: 1 }
+        : { t: 'button', key: 'menu/hide', icon: 'eye-off', label: 'Hide', action: 'island:hide', style: 'secondary', tip: `Hide the island like tapping ${ctrlKey()} over it, until you right-click it and press Show`, prio: 1 },
       { t: 'button', key: 'menu/activities', icon: 'grid', label: 'Activities', action: 'island:app', arg: 'activities', side: 'end', style: 'secondary', prio: 1 },
-      { t: 'button', key: 'menu/settings', icon: 'settings', action: 'island:app', arg: 'settings', side: 'end', style: 'ghost', tip: 'Settings', prio: 1 },
+      { t: 'button', key: 'menu/settings', icon: 'settings', label: 'Settings', action: 'island:app', arg: 'settings', side: 'end', style: 'secondary', prio: 1 },
       // Last, at the far end: the menu opens under the pointer, so the next click lands
       // in the middle, and Quiet is too easy to turn on by accident there.
       { t: 'sep', key: 'menu/sep', side: 'end' },
@@ -833,10 +836,32 @@ export class Island {
     if (this.hover) {
       // The user can make Claude's stats the card every hover shows.
       const owner = this.settings.island.hoverCard === 'claude' && this.running.has('claude') ? 'claude' : this.ownerOf(this.hoverKey);
-      const card = owner ? ask(owner, 'hover') : null;
+      const card = owner ? this.hoverCardOf(owner, ask(owner, 'hover'), now, vertical) : null;
       if (card) return card;
     }
     return null;
+  }
+
+  /**
+   * How an activity grows when pointed at (Activities > Grows): "card" grows a card out of
+   * the pill, its own or else one made from its Control Center tile; "wide" only widens the pill.
+   */
+  private hoverCardOf(id: string, own: { owner: string; view: SheetView } | null, now: number, vertical: boolean): { owner: string; view: SheetView } | null {
+    if (growsOf(this.settings.activities.config[id], this.settings.island.defaultGrows) === 'wide') return own?.view.merge ? null : own;
+    if (own) return { ...own, view: { ...own.view, merge: true } };
+    const act = this.running.get(id);
+    if (!act?.tile) return null;
+    const interactive = this.settings.activities.config[id]?.interactive ?? true;
+    try {
+      const tile = act.tile({ reason: 'hover', now, width: 320, vertical, interactive, surfaced: null });
+      if (!tile) return null;
+      const meta = CATALOG_BY_ID.get(id) ?? act.meta;
+      const blocks = mapActions(tileCard(tile, meta.name, meta.icon), (a) => this.nsAction(id, a));
+      return { owner: id, view: { key: `${id}/tile-card`, blocks, merge: true } };
+    } catch (err) {
+      console.error(`tile card ${id}`, err);
+      return null;
+    }
   }
 
   /**
@@ -1164,6 +1189,16 @@ export class Island {
    * (compact, pulsing) and a tap on it brings their card back; a new urgent
    * event raises the pill again on its own.
    */
+  private setHold(on: boolean): void {
+    this.holdOn = on;
+    if (isTauri) void emit('island-hold', on);
+  }
+
+  /** Hidden stays hidden: when the menu it was brought back with closes without Show, hold again. */
+  private syncHold(): void {
+    if (this.userHidden && !this.holdOn && this.view !== 'menu') this.setHold(true);
+  }
+
   private dismiss(): void {
     const cancel = this.inputActive ? this.findInputCancel() : null;
     if (cancel) this.handleAction(cancel, null, this.renderer.pill);
@@ -1283,6 +1318,13 @@ export class Island {
         break;
       case 'island:dnd':
         this.toggleQuiet();
+        break;
+      case 'island:hide':
+        // Hide and Show are the same button: Show puts the island back where it was.
+        this.userHidden = !this.userHidden;
+        this.view = 'main';
+        this.open = false;
+        this.setHold(this.userHidden);
         break;
       case 'island:app':
         void native.openApp(typeof arg === 'string' ? arg : null);

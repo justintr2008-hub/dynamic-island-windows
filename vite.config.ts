@@ -12,7 +12,7 @@ export default defineConfig({
   server: {
     port: 1430,
     strictPort: true,
-    watch: { ignored: ['**/src-tauri/**', '**/hook/**', '**/release/**'] },
+    watch: { ignored: ['**/src-tauri/**', '**/hook/**', '**/release/**', '**/target/**'] },
   },
   build: {
     target: 'es2022',

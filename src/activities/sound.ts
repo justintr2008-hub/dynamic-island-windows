@@ -77,6 +77,12 @@ export class SoundActivity extends BaseActivity {
         label: clip(a.device ?? 'Audio output', 24),
         value: a.muted ? 'Muted' : `${pct}%`,
         progress: pct / 100,
+        buttons: env.interactive
+          ? [
+              { key: 'down', icon: 'minus', action: 'vol-down', style: 'secondary', tip: 'Volume down' },
+              { key: 'up', icon: 'plus', action: 'vol-up', style: 'secondary', tip: 'Volume up' },
+            ]
+          : undefined,
       },
     };
   }

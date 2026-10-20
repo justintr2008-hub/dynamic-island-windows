@@ -26,6 +26,17 @@ interface TimerState {
 }
 
 const DONE_SHOW_MS = 60000;
+/** The dial's ceiling: 23:59:59. */
+const MAX_SECONDS = 86399;
+
+/** "5 min", "1h 30m", "45s", "2m 30s": a length as people say it. */
+export function shortLength(secs: number): string {
+  const h = Math.floor(secs / 3600);
+  const m = Math.floor(secs / 60) % 60;
+  const s = secs % 60;
+  if (!h && !s) return `${m} min`;
+  return [h ? `${h}h` : '', m ? `${m}m` : '', s ? `${s}s` : ''].filter(Boolean).join(' ');
+}
 
 export class TimerActivity extends BaseActivity {
   private t: TimerState | null = null;
@@ -145,12 +156,19 @@ export class TimerActivity extends BaseActivity {
 
   // ---------------------------------------------------------------- view
 
+  /** The length the timer starts with, set on its tile's dial (5 minutes until then). */
+  private timerSeconds(): number {
+    const n = Math.round(Number(this.ctx.options<{ timerSeconds: number }>().timerSeconds));
+    return Number.isFinite(n) && n > 0 ? Math.min(MAX_SECONDS, n) : 300;
+  }
+
   /** Starters for the open, idle island. */
   home(): Seg[] {
     if (this.t) return [];
     const o = this.ctx.options<{ focusMinutes: number }>();
+    const n = this.timerSeconds();
     return [
-      { t: 'button', key: 'start5', icon: 'timer', label: '5m', action: 'start', arg: 5, style: 'secondary', prio: 5, tip: 'Start a 5 minute timer' },
+      { t: 'button', key: 'start5', icon: 'timer', label: shortLength(n), action: 'start-secs', arg: n, style: 'secondary', prio: 5, tip: `Start a ${shortLength(n)} timer` },
       { t: 'button', key: 'focus', icon: 'focus', label: `${o.focusMinutes || 25}m`, action: 'focus', style: 'secondary', prio: 5, tip: 'Start a focus session' },
       { t: 'button', key: 'sw', icon: 'stopwatch', action: 'stopwatch', style: 'ghost', prio: 6, tip: 'Stopwatch' },
     ];
@@ -166,16 +184,29 @@ export class TimerActivity extends BaseActivity {
       // A tile of nothing but a title is no use when buttons are off.
       if (!env.interactive) return null;
       const starters = this.home().flatMap((s): SheetButton[] => (s.t === 'button' ? [{ key: s.key, icon: s.icon, action: s.action, arg: s.arg, style: s.style === 'good' ? 'primary' : 'secondary', tip: s.tip }] : []));
-      return { key: 'timer', tone: 'accent', body: { k: 'actions', icon: 'timer', label: 'Timer', buttons: starters } };
+      // The dial and its Start replace the quick-timer button; focus and stopwatch sit small up top.
+      const buttons = starters.filter((b) => b.key !== 'start5').map((b) => ({ ...b, style: 'ghost' as const }));
+      const dial = { seconds: this.timerSeconds(), action: 'length', start: { key: 'start', icon: 'play', action: 'start-secs', style: 'primary' as const, tip: 'Start' } };
+      return { key: 'timer', tone: 'accent', body: { k: 'actions', icon: 'timer', label: 'Timer', buttons, dial } };
     }
 
     if (t.doneAt) {
       const focus = t.mode === 'focus';
       const buttons: SheetButton[] = [];
       if (env.interactive) {
-        if (focus) buttons.push({ key: 'next', icon: 'next', action: 'next', style: 'primary', tip: t.phase === 'focus' ? 'Start break' : 'Next focus' });
-        else buttons.push({ key: 'add', icon: 'plus', action: 'add', arg: 60000, style: 'secondary', tip: 'Add a minute' });
-        buttons.push({ key: 'dismiss', icon: 'check', action: 'dismiss', style: 'ghost', tip: 'Dismiss' });
+        // The same buttons, in the same order, as the pill's finished timer (render below).
+        if (focus) {
+          buttons.push(
+            { key: 'next', label: t.phase === 'focus' ? 'Start break' : 'Next focus', action: 'next', style: 'primary' },
+            { key: 'dismiss', icon: 'check', action: 'dismiss', style: 'secondary', tip: 'Dismiss' },
+          );
+        } else {
+          buttons.push(
+            { key: 'snooze', label: '+1 min', action: 'add', arg: 60000, style: 'secondary' },
+            { key: 'restart', icon: 'refresh', action: 'restart', style: 'ghost', tip: 'Again' },
+            { key: 'dismiss', icon: 'check', label: 'Done', action: 'dismiss', style: 'primary' },
+          );
+        }
       }
       const label = focus ? (t.phase === 'focus' ? 'Focus done' : 'Break over') : `${t.label} done`;
       return { key: 'timer', tone: 'warn', body: { k: 'actions', icon: 'bell', label, sub: 'Time is up', buttons } };
@@ -256,6 +287,20 @@ export class TimerActivity extends BaseActivity {
       case 'stopwatch':
         this.startStopwatch();
         return;
+      case 'length': {
+        // The dial's new total, in seconds (0 is allowed while setting it; Start ignores it).
+        const n = Math.round(Number(arg));
+        if (!Number.isFinite(n)) return;
+        this.ctx.setOptions?.({ timerSeconds: Math.min(MAX_SECONDS, Math.max(0, n)) });
+        this.ctx.update();
+        return;
+      }
+      case 'start-secs': {
+        // The dial sends its own length (0 on an empty dial starts nothing); without one, the saved length.
+        const n = Math.min(MAX_SECONDS, Math.round(typeof arg === 'number' ? arg : this.timerSeconds()));
+        if (n > 0) this.startTimer(n * 1000, `${shortLength(n)} timer`);
+        return;
+      }
     }
     const t = this.t;
     if (!t) return;

@@ -537,16 +537,21 @@ export class StatusEngine {
       }
     }
     // "Claude responded" (through Chrome, also for desktop-app chats) doesn't name
-    // the chat: only trust it when exactly one app/Chrome chat was running.
+    // the chat: only trust it when exactly one chat was running. A Chrome chat in a
+    // background tab never updates its tree, so it stays "running" for good: when
+    // that is the only Chrome chat running, a desktop-app chat running beside it
+    // doesn't make the event ambiguous (the app names its own finishes).
     const running = items.filter((x) => x.source !== 'code' && x.state === 'running');
     for (const t of [...this.chromeEvents].sort((a, b) => a - b)) {
-      const candidates = running.filter((x) => x.state === 'running' && x.since < t);
+      const open = running.filter((x) => x.state === 'running' && x.since < t);
+      const chrome = open.filter((x) => x.source === 'chrome');
+      const candidates = open.length === 1 ? open : chrome.length === 1 ? chrome : [];
       if (candidates.length === 1) {
         const x = candidates[0];
         x.state = 'done';
         x.since = t;
         x.unread = true;
-      }
+      } else if (open.length > 1) this.log('chrome finish not matched', `${open.length} chats running: ${open.map((x) => `${x.source}:${x.title}`).join(' | ')}`);
     }
   }
 
