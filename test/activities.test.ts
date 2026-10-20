@@ -588,9 +588,26 @@ describe('system', () => {
     expect(act.status()).toMatchObject({ active: true, weight: 'background' });
     expect(act.render(env('compact')).find((s) => s.t === 'text')).toMatchObject({ text: 'CPU 42%' });
     const expanded = act.render(env('expanded')).map((s) => (s.t === 'text' ? s.text : ''));
-    expect(expanded).toEqual(expect.arrayContaining(['CPU 42%', 'RAM 14.0 GB', 'GPU 12%']));
+    expect(expanded).toEqual(expect.arrayContaining(['CPU 42%', 'RAM 94%', 'GPU 12%']));
     expect(act.render(env('maximum')).filter((s) => s.t === 'meter').map((s) => s.key)).toEqual(['cpu', 'mem', 'gpu']);
+    expect(act.chip()).toMatchObject({ icon: 'cpu', label: '42%', keepLabel: true });
     smoke(act, 'system always');
+  });
+
+  it('shows the chosen stats in the chosen order', async () => {
+    h.native.sysSample = vi.fn(async () => sample(42, { memUsed: 8e9 }));
+    const { act } = await boot(new SystemActivity(), {
+      always: true, order: 'mem,gpu,cpu', expandedCpu: false, expandedRam: true, expandedGpu: true,
+    });
+    await tick(1000);
+    const texts = (level: Parameters<typeof env>[0]) => act.render(env(level)).flatMap((s) => (s.t === 'text' ? [s.text] : []));
+    expect(texts('compact')).toEqual(['RAM 50%']);
+    expect(texts('expanded')).toEqual(['RAM 50%', 'GPU 12%']);
+    expect(act.render(env('maximum')).filter((s) => s.t === 'meter').map((s) => s.key)).toEqual(['mem', 'gpu']);
+    expect(act.chip()).toMatchObject({ icon: 'memory', label: '50%' });
+    const card = act.sheet({ reason: 'hover', now: Date.now(), width: 300, vertical: false, interactive: true, surfaced: null });
+    expect(card).toMatchObject({ merge: true });
+    expect(card!.blocks.filter((b) => b.t === 'meter').map((b) => b.key)).toEqual(['mem', 'gpu']);
   });
 });
 

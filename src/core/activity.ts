@@ -39,6 +39,8 @@ export interface ChipView {
   tone?: Tone;
   dot?: Tone;
   pulse?: boolean;
+  /** On the small island, where chips are normally icon only, show the label instead of the icon. */
+  keepLabel?: boolean;
 }
 
 export interface RenderEnv {

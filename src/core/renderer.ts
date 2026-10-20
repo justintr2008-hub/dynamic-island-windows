@@ -368,7 +368,9 @@ export class PillRenderer {
         const current = e.querySelector<HTMLElement>('.t:not(.out)')!;
         if (current.textContent !== seg.text) {
           // Clocks, timers and counters just tick in place; only wording changes roll.
-          if (!prev || prev.t !== 'text' || (timeLike(current.textContent ?? '') && timeLike(seg.text))) current.textContent = seg.text;
+          // A label whose only change is its digits ("CPU 17%" to "CPU 18%") ticks too.
+          const old = current.textContent ?? '';
+          if (!prev || prev.t !== 'text' || (timeLike(old) && timeLike(seg.text)) || old.replace(/\d/g, '') === seg.text.replace(/\d/g, '')) current.textContent = seg.text;
           else this.rollText(e, current, seg.text);
         }
         break;

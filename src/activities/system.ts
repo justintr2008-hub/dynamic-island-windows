@@ -2,14 +2,28 @@
 // "Always show" is on.
 
 import type { PetSignal } from '../core/pet';
-import type { ActivityStatus, ChipView, RenderEnv } from '../core/activity';
+import type { ActivityStatus, ChipView, RenderEnv, SheetEnv } from '../core/activity';
 import { bytes } from '../core/format';
 import { native, type SysSample } from '../core/native';
 import type { Seg } from '../core/segments';
-import type { Tile } from '../core/sheet';
+import type { Block, SheetView, Tile } from '../core/sheet';
 import { BaseActivity } from './base';
 
-type Options = { always: boolean; cpuSpike: number; memSpike: number };
+type Stat = 'cpu' | 'mem' | 'gpu';
+type Options = { always: boolean; hoverCard: boolean; order: Stat[]; expanded: Set<Stat>; cpuSpike: number; memSpike: number };
+type Pick = { key: Stat; label: string; icon: 'cpu' | 'memory' | 'gpu'; pct: number };
+
+const STATS: Record<Stat, { label: string; icon: Pick['icon'] }> = {
+  cpu: { label: 'CPU', icon: 'cpu' },
+  mem: { label: 'RAM', icon: 'memory' },
+  gpu: { label: 'GPU', icon: 'gpu' },
+};
+
+/** "mem,cpu,gpu" from settings, with anything missing or unknown fixed up. */
+function parseOrder(raw: unknown): Stat[] {
+  const seen = String(raw ?? '').split(',').filter((k): k is Stat => k in STATS);
+  return [...new Set([...seen, 'cpu', 'mem', 'gpu'] as Stat[])];
+}
 
 const SLOW_MS = 5000;
 const FAST_MS = 2000;
@@ -36,8 +50,29 @@ export class SystemActivity extends BaseActivity {
   }
 
   private opts(): Options {
-    const o = this.ctx.options<Partial<Options>>();
-    return { always: o.always === true, cpuSpike: Number(o.cpuSpike) || 90, memSpike: Number(o.memSpike) || 92 };
+    const o = this.ctx.options<Record<string, unknown>>();
+    const set = (cpu: unknown, mem: unknown, gpu: unknown) =>
+      new Set<Stat>([cpu ? 'cpu' : null, mem ? 'mem' : null, gpu ? 'gpu' : null].filter((k): k is Stat => k !== null));
+    return {
+      always: o.always === true,
+      hoverCard: o.hoverCard !== false,
+      order: parseOrder(o.order),
+      expanded: set(o.expandedCpu !== false, o.expandedRam !== false, o.expandedGpu !== false),
+      cpuSpike: Number(o.cpuSpike) || 90,
+      memSpike: Number(o.memSpike) || 92,
+    };
+  }
+
+  /** The small island has room for one stat: the top of the priority list this PC can measure. */
+  private top(s: SysSample, order: Stat[]): Pick {
+    return this.picks(s, new Set(order), order)[0];
+  }
+
+  /** The chosen stats in priority order; nothing chosen (or only a missing GPU) means CPU. */
+  private picks(s: SysSample, chosen: Set<Stat>, order: Stat[]): Pick[] {
+    const pct: Record<Stat, number | null> = { cpu: Math.round(s.cpu), mem: this.memPct(s), gpu: s.gpu === null ? null : Math.round(s.gpu) };
+    const out = order.filter((k) => chosen.has(k) && pct[k] !== null).map((k) => ({ key: k, ...STATS[k], pct: pct[k]! }));
+    return out.length ? out : [{ key: 'cpu', ...STATS.cpu, pct: pct.cpu! }];
   }
 
   private async tick(): Promise<void> {
@@ -95,14 +130,38 @@ export class SystemActivity extends BaseActivity {
     };
   }
 
+  /** Beside another activity: the top priority stat, number included even on the small island. */
   chip(): ChipView | null {
     const s = this.s;
     if (!s) return null;
-    return { icon: 'cpu', label: `${Math.round(s.cpu)}%`, tone: this.spike(Date.now()) ? 'bad' : 'muted' };
+    const top = this.top(s, this.opts().order);
+    return { icon: top.icon, label: `${top.pct}%`, tone: this.spike(Date.now()) ? 'bad' : 'muted', keepLabel: true };
   }
 
   private memPct(s: SysSample): number {
     return s.memTotal > 0 ? Math.round((s.memUsed / s.memTotal) * 100) : 0;
+  }
+
+  /** Pointing at it: a card grows out of the pill with a bar per stat, like now playing and Claude. */
+  sheet(env: SheetEnv): SheetView | null {
+    const s = this.s;
+    const o = this.opts();
+    if (env.reason !== 'hover' || !s || !o.hoverCard || !this.status().active) return null;
+    const warn: Record<Stat, number> = { cpu: o.cpuSpike, mem: o.memSpike, gpu: 101 };
+    const sub: Record<Stat, string | undefined> = {
+      cpu: s.top ? `${s.top.name} ${Math.round(s.top.cpu)}%` : undefined,
+      mem: `${bytes(s.memUsed)} of ${bytes(s.memTotal)}`,
+      gpu: undefined,
+    };
+    // The card is the expanded view's stats, as bars.
+    const picks = this.picks(s, o.expanded, o.order);
+    const blocks: Block[] = [
+      { t: 'head', key: 'head', icon: picks[0].icon, tone: 'accent', title: 'System' },
+      ...picks.map((p): Block => ({
+        t: 'meter', key: p.key, label: p.label, value: p.pct / 100, pace: null, text: `${p.pct}%`, sub: sub[p.key], tone: p.pct >= warn[p.key] ? 'bad' : 'accent',
+      })),
+    ];
+    return { key: 'system', blocks, merge: true };
   }
 
   /** CPU as the number, memory underneath; red while the CPU is past the spike threshold. */
@@ -139,22 +198,19 @@ export class SystemActivity extends BaseActivity {
       return segs;
     }
 
-    const icon: Seg = { t: 'icon', key: 'icon', icon: 'cpu', tone: 'accent', prio: 0 };
-    if (compact) return [icon, { t: 'text', key: 'cpu', text: env.vertical ? `${cpu}%` : `CPU ${cpu}%`, weight: 'semibold', prio: 0 }];
+    const picks = compact ? [this.top(s, o.order)] : this.picks(s, o.expanded, o.order);
+    const icon: Seg = { t: 'icon', key: 'icon', icon: picks[0].icon, tone: 'accent', prio: 0 };
 
     if (env.level === 'maximum') {
-      const segs: Seg[] = [
-        icon,
-        { t: 'meter', key: 'cpu', label: 'CPU', value: s.cpu / 100, pace: null, text: `${cpu}%`, tone: cpu >= o.cpuSpike ? 'bad' : 'accent', w: 120, prio: 0 },
-        { t: 'meter', key: 'mem', label: 'RAM', value: mem / 100, pace: null, text: env.vertical ? `${mem}%` : bytes(s.memUsed), tone: mem >= o.memSpike ? 'bad' : 'accent', w: 130, prio: 1 },
-      ];
-      if (s.gpu !== null) segs.push({ t: 'meter', key: 'gpu', label: 'GPU', value: s.gpu / 100, pace: null, text: `${Math.round(s.gpu)}%`, tone: 'accent', w: 120, prio: 2 });
-      return segs;
+      const warn: Record<Stat, number> = { cpu: o.cpuSpike, mem: o.memSpike, gpu: 101 };
+      return [icon, ...picks.map((p, i): Seg => ({
+        t: 'meter', key: p.key, label: p.label, value: p.pct / 100, pace: null, text: `${p.pct}%`, tone: p.pct >= warn[p.key] ? 'bad' : 'accent', w: 120, prio: i,
+      }))];
     }
 
-    const segs: Seg[] = [icon, { t: 'text', key: 'cpu', text: env.vertical ? `${cpu}%` : `CPU ${cpu}%`, weight: 'semibold', prio: 0 }];
-    if (!env.vertical) segs.push({ t: 'text', key: 'mem', text: `RAM ${bytes(s.memUsed)}`, tone: 'muted', prio: 3 });
-    if (s.gpu !== null && !env.vertical) segs.push({ t: 'text', key: 'gpu', text: `GPU ${Math.round(s.gpu)}%`, tone: 'muted', prio: 4 });
-    return segs;
+    // Compact and expanded: the first pick leads, the rest follow in grey. Vertical has room for one number only.
+    return [icon, ...(env.vertical ? picks.slice(0, 1) : picks).map((p, i): Seg => ({
+      t: 'text', key: p.key, text: env.vertical ? `${p.pct}%` : `${p.label} ${p.pct}%`, weight: i === 0 ? 'semibold' : undefined, tone: i === 0 ? undefined : 'muted', prio: i === 0 ? 0 : i + 2,
+    }))];
   }
 }

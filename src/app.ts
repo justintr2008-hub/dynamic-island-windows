@@ -7,7 +7,7 @@ import { getCurrentWindow } from '@tauri-apps/api/window';
 import { CATALOG_BY_ID, type ActivityMeta, type Band, type OptionSpec } from './activities/catalog';
 import { SpringSet } from './core/animator';
 import { agoText, pace, resetsIn, resetsOn, SESSION_WINDOW_MS, tokens as fmtTokens, WEEK_WINDOW_MS } from './core/format';
-import { icon } from './core/icons';
+import { icon, type IconName } from './core/icons';
 import { levelWidth, normalizeWidths, type Anchor, type Level } from './core/layout';
 import { isTauri, native, on, sendTo, type MonitorInfo } from './core/native';
 import { availableHere, ctrlKey, optionHere, platform, thisComputer, unavailableReason } from './core/platform';
@@ -238,8 +238,10 @@ function cardBody(meta: ActivityMeta): HTMLElement {
   const body = h('div', { class: 'act-body' }, [
     h('div', { class: 'body-row' }, [h('span', { class: 'label', text: 'Priority' }), segmented(c.priority, [['high', 'High'], ['medium', 'Medium'], ['low', 'Low']], (v) => { c.priority = v; c.enabled = true; save(true); flipRender(); })]),
     h('div', { class: 'body-row' }, [h('span', { class: 'label', text: 'Behavior' }), chips]),
-    // Local AI's model is picked in its panel below, not typed.
-    ...meta.options.filter((o) => optionHere(o) && !(meta.id === 'local' && o.key === 'model')).map((o) => optionRow(meta.id, o)),
+    // Local AI's model is picked in its panel below, not typed; System Stats' picks live in its table.
+    ...meta.options
+      .filter((o) => optionHere(o) && !(meta.id === 'local' && o.key === 'model') && !(meta.id === 'system' && SYSTEM_TABLE_KEYS.has(o.key)))
+      .flatMap((o) => (meta.id === 'system' && o.key === 'always' ? [optionRow(meta.id, o), systemTable()] : [optionRow(meta.id, o)])),
   ]);
   if (meta.id === 'claude') body.append(claudePanel());
   if (meta.id === 'local') body.append(localPanel());
@@ -265,6 +267,70 @@ function optionRow(id: string, o: OptionSpec): HTMLElement {
     control = input;
   }
   return row(o.label, o.help ?? null, control);
+}
+
+// ------------------------------------------------------------------ System Stats table
+
+const SYSTEM_STATS: Array<{ key: 'cpu' | 'mem' | 'gpu'; label: string; icon: IconName; opt: 'Cpu' | 'Ram' | 'Gpu' }> = [
+  { key: 'cpu', label: 'CPU', icon: 'cpu', opt: 'Cpu' },
+  { key: 'mem', label: 'RAM', icon: 'memory', opt: 'Ram' },
+  { key: 'gpu', label: 'GPU', icon: 'gpu', opt: 'Gpu' },
+];
+const SYSTEM_TABLE_KEYS = new Set(['order', ...SYSTEM_STATS.map((s) => `expanded${s.opt}`)]);
+
+/** One row per stat: drag the grip to set the priority (the top one is the compact island's), and a switch for the expanded island. */
+function systemTable(): HTMLElement {
+  const meta = CATALOG_BY_ID.get('system')!;
+  const opts = cfg('system').options;
+  const value = (key: string) => Boolean(opts[key] ?? meta.options.find((o) => o.key === key)?.default);
+  const saved = String(opts.order ?? 'cpu,mem,gpu').split(',');
+  const stats = [...SYSTEM_STATS].sort((a, b) => (saved.indexOf(a.key) + 4) % 4 - ((saved.indexOf(b.key) + 4) % 4));
+
+  const list = h('div', { class: 'stat-rows' });
+  for (const s of stats) {
+    const grip = h('span', { class: 'grip', html: icon('more'), title: 'Drag to change the priority' });
+    const line = h('div', { class: 'stat-row', 'data-key': s.key }, [
+      grip,
+      h('span', { class: 'stat-icon', html: icon(s.icon) }),
+      h('span', { class: 'stat-name', text: s.label }),
+      h('span', { class: 'stat-cell' }, [toggle(value(`expanded${s.opt}`), (v) => { opts[`expanded${s.opt}`] = v; save(); }, `${s.label} when expanded`)]),
+    ]);
+    grip.addEventListener('pointerdown', (e) => dragStat(e as PointerEvent, line, list, () => {
+      opts.order = [...list.children].map((el) => (el as HTMLElement).dataset.key).join(',');
+      save();
+    }));
+    list.append(line);
+  }
+  return h('div', { class: 'stat-table' }, [
+    h('div', { class: 'stat-head' }, [h('span', { class: 'stat-title', text: 'Priority' }), h('span', { class: 'stat-cell', text: 'Expanded' })]),
+    list,
+    h('div', { class: 'row-help', text: 'The top stat is the one on the compact island and beside other activities. Expanded shows the ones switched on, in this order.' }),
+  ]);
+}
+
+/** Drag a stat row up or down; it swaps past a neighbour once the pointer crosses that neighbour's middle. */
+function dragStat(e: PointerEvent, line: HTMLElement, list: HTMLElement, done: () => void): void {
+  if (e.button !== 0) return;
+  e.preventDefault();
+  e.stopPropagation();
+  const grip = e.currentTarget as HTMLElement;
+  grip.setPointerCapture(e.pointerId);
+  line.classList.add('dragging');
+  const move = (ev: PointerEvent) => {
+    const others = [...list.children].filter((el) => el !== line) as HTMLElement[];
+    const before = others.find((el) => { const r = el.getBoundingClientRect(); return ev.clientY < r.top + r.height / 2; });
+    if (before ? line.nextElementSibling !== before : list.lastElementChild !== line) list.insertBefore(line, before ?? null);
+  };
+  const up = () => {
+    grip.removeEventListener('pointermove', move);
+    grip.removeEventListener('pointerup', up);
+    grip.removeEventListener('pointercancel', up);
+    line.classList.remove('dragging');
+    done();
+  };
+  grip.addEventListener('pointermove', move);
+  grip.addEventListener('pointerup', up);
+  grip.addEventListener('pointercancel', up);
 }
 
 function toggleCard(id: string): void {
