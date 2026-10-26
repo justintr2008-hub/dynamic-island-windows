@@ -33,13 +33,17 @@ function provisional(t: string): boolean {
   return t.endsWith('…') || ['New chat', 'Untitled', 'New session', 'New conversation'].includes(t);
 }
 
-/** Claude often refines a title ("Source files access" -> "Project source files access"). */
+/**
+ * Claude often refines a title ("Source files access" -> "Project source files access"),
+ * and Claude in Chrome starts from the prompt and trims it ("go to API key" -> "API key").
+ */
 export function renameLike(old: string, title: string): boolean {
   if (provisional(old)) return true;
   const words = (s: string) => s.toLowerCase().split(/\W+/).filter(Boolean);
+  const within = (a: string[], b: string[]) => a.length > 0 && a.every((w) => b.includes(w));
   const ow = words(old);
-  const nw = new Set(words(title));
-  return ow.length > 0 && ow.every((w) => nw.has(w));
+  const nw = words(title);
+  return within(ow, nw) || within(nw, ow);
 }
 
 /** A stable id per conversation: app chats by title and row, Chrome ones by window and title. */

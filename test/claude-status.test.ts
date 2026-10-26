@@ -167,6 +167,16 @@ describe('Claude Status: app and Chrome chats (ui_watcher.ps1)', () => {
     expect(renameLike('Source files access', 'Project source files access')).toBe(true);
     expect(renameLike('Source files', 'Lunch plans')).toBe(false);
     expect(renameLike('New chat', 'Anything')).toBe(true);
+    expect(renameLike('go to API key', 'API key')).toBe(true);
+  });
+
+  it('a Chrome chat whose title gets trimmed keeps one row, not a stuck running one', () => {
+    const w = new ChatWatcher();
+    const tab = (title: string, state: 'running' | 'done' = 'running') => chat({ source: 'chrome', hwnd: 9, chat: '', title, state });
+    w.update(scan([tab('go to API key')]), 1);
+    w.update(scan([tab('API key')]), 2);
+    const rows = w.update(scan([tab('API key', 'done')]), 3);
+    expect(rows.map((x) => [x.title, x.state])).toEqual([['API key', 'done']]);
   });
 });
 
