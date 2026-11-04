@@ -4,7 +4,7 @@ vi.mock('../src/core/native', async () => await import('./fake-native'));
 
 import type { UiChat, UiScan } from '../src/core/native';
 import { ChatWatcher, chatKey, renameLike } from '../src/activities/claude-status/chats';
-import { applyShells, applyWorkflow, hostOf, isDismissed, isStale, labelItems, normTitle, orderWithShells, runProgress, sortItems, sourceTag, stateWord, type Item } from '../src/activities/claude-status/engine';
+import { applyShells, applyWorkflow, hostOf, isDismissed, isStale, shellDismissed, labelItems, normTitle, orderWithShells, runProgress, sortItems, sourceTag, stateWord, type Item } from '../src/activities/claude-status/engine';
 import { bashCommand, estimate, fmtLeft, shellKey, shellSamples } from '../src/activities/claude-status/estimate';
 import { age, toneOf, type StatusRow } from '../src/activities/claude-status';
 import { emptyWork, fold } from '../src/activities/claude-status/work';
@@ -289,5 +289,14 @@ describe('Claude Status: the rules (widget.pyw)', () => {
     expect(isDismissed({ since: 600, source: 'code', state: 'running' }, d)).toBe(false);
     expect(isDismissed({ since: 600, source: 'app', state: 'done' }, d)).toBe(true);
     expect(isDismissed({ since: 600, source: 'app', state: 'done' }, undefined)).toBe(false);
+  });
+
+  it('a dismissed shell row comes back once its session moves on', () => {
+    const sh = { since: 100, source: 'code' as const, state: 'shell' as const };
+    const d = { at: 500, state: 'shell' as const };
+    expect(shellDismissed(sh, { since: 400 }, d)).toBe(true);
+    expect(shellDismissed(sh, { since: 600 }, d)).toBe(false); // a new turn, or the turn ended
+    expect(shellDismissed({ ...sh, since: 700 }, { since: 400 }, d)).toBe(false); // a newer shell
+    expect(shellDismissed(sh, { since: 400 }, undefined)).toBe(false);
   });
 });

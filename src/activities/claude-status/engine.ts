@@ -211,6 +211,11 @@ export function isDismissed(x: Pick<Item, 'since' | 'source' | 'state'>, d: Dism
   return x.source !== 'code' && x.state === d.state;
 }
 
+/** A shell row's state never changes, so its dismissal lasts until its session's state does. */
+export function shellDismissed(sh: Pick<Item, 'since' | 'source' | 'state'>, session: Pick<Item, 'since'>, d: Dismissal | undefined): boolean {
+  return !!d && session.since <= d.at && isDismissed(sh, d);
+}
+
 /** A tool shell Claude started, alive right now. */
 export interface LiveShell {
   created: number;
@@ -757,7 +762,7 @@ export class StatusEngine {
     const shells: Item[] = [];
     for (const x of all) {
       const sh = applyShells(x, this.shellLive.get(x.id) ?? [], now, timed);
-      if (sh && !isDismissed(sh, this.dismissed[sh.id])) shells.push(sh);
+      if (sh && !shellDismissed(sh, x, this.dismissed[sh.id])) shells.push(sh);
     }
 
     // Inactive a while: gone, as if dismissed.
