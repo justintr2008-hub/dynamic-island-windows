@@ -21,3 +21,27 @@ pub async fn claude_status_ui_scan() -> Option<()> {
 pub async fn claude_status_open_chat() -> bool {
     false
 }
+
+/// The model router's kill switch: an empty `off` file next to its hook (~/.claude/model-router).
+fn router_off_file() -> Option<std::path::PathBuf> {
+    std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".claude").join("model-router").join("off"))
+}
+
+/// Whether the model router is on (no `off` file).
+#[tauri::command]
+pub fn claude_router_get() -> bool {
+    router_off_file().is_none_or(|p| !p.exists())
+}
+
+/// Turns the model router on or off for every session; returns the new state.
+#[tauri::command]
+pub fn claude_router_set(on: bool) -> bool {
+    if let Some(p) = router_off_file() {
+        if on {
+            let _ = std::fs::remove_file(&p);
+        } else {
+            let _ = std::fs::write(&p, "");
+        }
+    }
+    claude_router_get()
+}
