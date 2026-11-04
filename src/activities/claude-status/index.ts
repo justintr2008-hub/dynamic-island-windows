@@ -11,11 +11,15 @@ import type { Seg, Tone } from '../../core/segments';
 import type { Block, SheetRow, SheetView, Tile } from '../../core/sheet';
 import { BaseActivity } from '../base';
 import { StatusEngine, type StatusRow, type StatusState } from './engine';
+import { checkRows, ModelChecks, type ModelCheck } from './model-check';
 
 export type { StatusRow, StatusState } from './engine';
 
 const POLL_MS = 1000;
 const SHOW_MS = 4000;
+/** The model router's checks (model-check.ts): looked for every few seconds; a new one holds the island this long. */
+const CHECK_POLL_MS = 5000;
+const CHECK_SHOW_MS = 8000;
 
 /** The widget's colours, in the island's tones. */
 export function toneOf(row: StatusRow): Tone {
@@ -48,6 +52,11 @@ export class ClaudeStatusActivity extends BaseActivity {
   private last = new Map<string, StatusState>();
   /** A session just finished (green), failed or was stopped (red), or needs you (orange): the island glows that colour for a moment. */
   private flash: { tone: Tone; until: number } | null = null;
+  /** The model router's end-of-chat checks: was each prompt on the right model. */
+  private modelChecks: ModelChecks | null = null;
+  private checks: ModelCheck[] = [];
+  /** A check that just arrived: the pill shows its line until `until`. */
+  private news: { check: ModelCheck; until: number } | null = null;
 
   constructor() {
     super('claudeStatus');
@@ -59,6 +68,38 @@ export class ClaudeStatusActivity extends BaseActivity {
     this.engine = new StatusEngine(env.configDir, (...p) => this.ctx.log(...p));
     await this.engine.importWidget(env.configDir);
     this.every(POLL_MS, () => void this.poll(), true);
+    this.modelChecks = new ModelChecks(`${env.configDir}/model-router/reviews`);
+    this.every(CHECK_POLL_MS, () => void this.pollChecks(), true);
+  }
+
+  /** The model router's checks of the last two hours; one that just arrived pops the island with its line. */
+  private async pollChecks(): Promise<void> {
+    if (!this.modelChecks) return;
+    const hidden = new Set(this.ctx.options<{ modelChecksHidden?: string[] }>().modelChecksHidden ?? []);
+    const now = Date.now();
+    const list = (await this.modelChecks.poll(now)).filter((c) => !hidden.has(c.key));
+    if (!this.alive) return;
+    // Only a check made a moment ago is news (not the ones found when Island starts).
+    const fresh = list.find((c) => now - c.at < 2 * 60000 && !this.checks.some((o) => o.key === c.key));
+    if (fresh) {
+      this.news = { check: fresh, until: now + CHECK_SHOW_MS };
+      this.ctx.surface({ key: `check:${fresh.key}`, ms: CHECK_SHOW_MS, level: 'expanded' });
+      this.later(CHECK_SHOW_MS + 50, () => this.ctx.update());
+    }
+    if (fresh || list.map((c) => c.key).join() !== this.checks.map((c) => c.key).join()) {
+      this.checks = list;
+      this.ctx.update();
+    }
+  }
+
+  /** The check the pill is showing, while it is news. */
+  private fresh(): ModelCheck | null {
+    return this.news && Date.now() < this.news.until ? this.news.check : null;
+  }
+
+  /** The model checks' rows; a click switches to the chat while it still has a row. */
+  private checkRows(now: number): SheetRow[] {
+    return checkRows(this.checks, now, (session) => this.rows.find((r) => !r.parent && r.id.includes(session))?.id ?? null);
   }
 
   private async poll(): Promise<void> {
@@ -126,7 +167,11 @@ export class ClaudeStatusActivity extends BaseActivity {
   }
 
   status(): ActivityStatus {
-    if (!this.rows.length) return { active: false };
+    // No sessions left, only model checks (a chat that ended): a quiet Claude entry.
+    if (!this.rows.length) {
+      if (!this.checks.length) return { active: false };
+      return { active: true, weight: this.fresh() ? 'foreground' : 'background', summary: `Model check · ${this.checks[0].title}` };
+    }
     const running = this.rows.some((r) => !r.grey && r.state === 'running');
     const shell = this.rows.some((r) => !r.grey && r.state === 'shell');
     const waiting = this.waiting().length;
@@ -159,15 +204,22 @@ export class ClaudeStatusActivity extends BaseActivity {
 
   chip(): ChipView | null {
     const t = this.top();
-    if (!t) return null;
+    if (!t) return this.checks.length ? { icon: 'claude', dot: this.checks[0].tone } : null;
     return { icon: 'claude', label: String(this.sessions()), dot: toneOf(t), pulse: t.state === 'running' && !t.grey };
   }
 
   render(env: RenderEnv): Seg[] {
     const t = this.top();
-    if (!t) return [];
     const roomy = env.level === 'expanded' || env.level === 'maximum';
     const segs: Seg[] = [{ t: 'icon', key: 'mark', icon: 'claude', tone: 'claude', prio: 0 }];
+    // A model check that just arrived: its line, while the island is up for it.
+    const news = this.fresh();
+    if (news && !env.vertical && (roomy || env.hover || env.open || env.surfaced)) {
+      segs.push({ t: 'text', key: 'label', text: 'Model check', weight: 'semibold', prio: 1 });
+      segs.push({ t: 'text', key: 'state', text: news.line, tone: news.tone, size: 'sm', side: 'end', prio: 2, max: roomy ? 340 : 200 });
+      return segs;
+    }
+    if (!t) return this.checks.length ? segs : [];
     if (env.vertical) {
       segs.push({ t: 'dot', key: 'dot', tone: toneOf(t), pulse: t.state === 'running' && !t.grey, badge: this.rows.some((r) => r.unread), prio: 0 });
       return segs;
@@ -211,7 +263,7 @@ export class ClaudeStatusActivity extends BaseActivity {
   }
 
   sheet(env: SheetEnv): SheetView | null {
-    if (!this.rows.length) return null;
+    if (!this.rows.length && !this.checks.length) return null;
     const waiting = this.waiting().length;
     const blocks: Block[] = [
       {
@@ -220,7 +272,7 @@ export class ClaudeStatusActivity extends BaseActivity {
         icon: 'claude',
         tone: 'claude',
         title: 'Claude',
-        sub: waiting ? `${waiting} awaiting you` : `${this.sessions()} session${this.sessions() === 1 ? '' : 's'}`,
+        sub: waiting ? `${waiting} awaiting you` : this.rows.length ? `${this.sessions()} session${this.sessions() === 1 ? '' : 's'}` : 'Model check',
         // Settings > Claude Status > "Show Auto model button" hides it.
         buttons: this.ctx.options<{ showAutoModel?: boolean }>().showAutoModel === false ? [] : [
           {
@@ -234,25 +286,36 @@ export class ClaudeStatusActivity extends BaseActivity {
       },
     ];
     // Each row carries its progress bar on its second line, after "Terminal · running 6m".
-    blocks.push({ t: 'rows', key: 'rows', items: this.sheetRows(env.now, true) });
+    if (this.rows.length) blocks.push({ t: 'rows', key: 'rows', items: this.sheetRows(env.now, true) });
+    // Under the sessions: the model router's checks, newest first.
+    if (this.checks.length) blocks.push({ t: 'rows', key: 'checks', items: this.checkRows(env.now) });
     // Pointing at it, a chat finishing or one waiting on you: the card grows out of the pill instead of hanging under it.
     return { key: 'claudeStatus', blocks, merge: env.reason === 'hover' || env.reason === 'surfaced' || env.reason === 'urgent' };
   }
 
   tile(env: SheetEnv): Tile | null {
-    if (!this.rows.length) return null;
+    if (!this.rows.length && !this.checks.length) return null;
     return {
       key: 'claudeStatus',
       span: 2,
       rows: 2,
       tone: 'claude',
-      body: { k: 'list', icon: 'claude', label: 'Claude sessions', rows: this.sheetRows(env.now), empty: 'All quiet' },
+      body: { k: 'list', icon: 'claude', label: 'Claude sessions', rows: [...this.sheetRows(env.now), ...this.checkRows(env.now)], empty: 'All quiet' },
     };
   }
 
   async action(name: string, arg: unknown): Promise<void> {
     if (name === 'router') {
       this.routerOn = await native.setRouter(!this.routerOn);
+      this.ctx.update();
+      return;
+    }
+    // Hiding a model check: kept hidden (by file name) after Island restarts.
+    if (name === 'dismissCheck' && typeof arg === 'string') {
+      const hidden = this.ctx.options<{ modelChecksHidden?: string[] }>().modelChecksHidden ?? [];
+      this.ctx.setOptions?.({ modelChecksHidden: [...hidden.filter((k) => k !== arg), arg].slice(-30) });
+      this.checks = this.checks.filter((c) => c.key !== arg);
+      if (this.news?.check.key === arg) this.news = null;
       this.ctx.update();
       return;
     }
