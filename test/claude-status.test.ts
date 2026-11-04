@@ -4,7 +4,7 @@ vi.mock('../src/core/native', async () => await import('./fake-native'));
 
 import type { UiChat, UiScan } from '../src/core/native';
 import { ChatWatcher, chatKey, renameLike } from '../src/activities/claude-status/chats';
-import { applyShells, applyWorkflow, hostOf, isDismissed, isStale, labelItems, normTitle, runProgress, sortItems, sourceTag, stateWord, type Item } from '../src/activities/claude-status/engine';
+import { applyShells, applyWorkflow, hostOf, isDismissed, isStale, labelItems, normTitle, orderWithShells, runProgress, sortItems, sourceTag, stateWord, type Item } from '../src/activities/claude-status/engine';
 import { bashCommand, estimate, fmtLeft, shellKey, shellSamples } from '../src/activities/claude-status/estimate';
 import { age, toneOf, type StatusRow } from '../src/activities/claude-status';
 import { emptyWork, fold } from '../src/activities/claude-status/work';
@@ -181,23 +181,44 @@ describe('Claude Status: app and Chrome chats (ui_watcher.ps1)', () => {
 });
 
 describe('Claude Status: the rules (widget.pyw)', () => {
-  it('a background shell turns a finished row purple, keeping the turn', () => {
+  it('a background shell gets its own purple row; the session keeps its colour', () => {
     const x = item({ state: 'done', since: 500 });
-    applyShells(x, [{ created: 400, cmd: 'npm run dev', desc: 'Dev server', bg: true }], 1000, () => false);
-    expect(x).toMatchObject({ state: 'shell', turn: 'done', since: 400, shell: { count: 1, desc: 'Dev server' } });
-    expect(stateWord(x)).toBe('1 shell');
+    const sh = applyShells(x, [{ created: 400, cmd: 'npm run dev', desc: 'Dev server', bg: true }], 1000, () => false);
+    expect(x).toMatchObject({ state: 'done', since: 500 });
+    expect(sh).toMatchObject({ id: 'abcd1234:shell', state: 'shell', since: 400, label: 'Dev server', parent: { id: 'abcd1234', label: 'Fix the build' }, shell: { count: 1 } });
+    expect(stateWord(sh!)).toBe('1 shell');
+    // No description: the command names it.
+    expect(applyShells(item(), [{ created: 400, cmd: 'cd app && npm run dev 2>&1', desc: '', bg: true }], 1000, () => false)?.label).toBe('npm run dev');
   });
 
-  it('while Claude works, shells are counted, and an allowed command clears orange', () => {
+  it('while Claude works its row stays blue, with the shell beside it; an allowed command clears orange', () => {
     const x = item({ state: 'running' });
-    applyShells(x, [{ created: 900, cmd: 'npm run dev', desc: '', bg: true }], 1000, () => false);
-    expect(stateWord(x)).toBe('running · 1 shell');
+    const sh = applyShells(x, [{ created: 900, cmd: 'npm run dev', desc: '', bg: true }, { created: 950, cmd: 'npm run api', desc: '', bg: true }], 1000, () => false);
+    expect(x.state).toBe('running');
+    expect(stateWord(x)).toBe('running');
+    expect(sh).toMatchObject({ state: 'shell', label: 'npm run api', shell: { count: 2 } }); // the newest
+    expect(stateWord(sh!)).toBe('2 shells');
     const y = item({ state: 'input', since: 800 });
-    applyShells(y, [{ created: 900, cmd: 'npm test', desc: '', bg: false }], 1000, () => false);
+    expect(applyShells(y, [{ created: 900, cmd: 'npm test', desc: '', bg: false }], 1000, () => false)).toBeNull(); // waited on: no shell row
     expect(y).toMatchObject({ state: 'running', since: 900, command: { cmd: 'npm test' } });
     const z = item({ state: 'done' });
-    applyShells(z, [{ created: 999, cmd: 'npm test', desc: '', bg: true }], 1000, () => false);
-    expect(z.state).toBe('done'); // under 3 s: never flashes
+    expect(applyShells(z, [{ created: 999, cmd: 'npm test', desc: '', bg: true }], 1000, () => false)).toBeNull(); // under 3 s: never flashes
+    expect(z.state).toBe('done');
+  });
+
+  it('each shell row sits under its session, the pair sorted by the one that ranks first', () => {
+    const old = item({ id: 'old', title: 'a old', state: 'done', since: 0 }); // grey
+    const run = item({ id: 'run', title: 'm running', state: 'running' });
+    const ask = item({ id: 'ask', title: 'z asks', state: 'input' });
+    const sessions = [old, run, ask];
+    labelItems(sessions);
+    const shellOld = applyShells(old, [{ created: 10, cmd: 'npm run dev', desc: '', bg: true }], 1000, () => false)!;
+    const shellRun = applyShells(run, [{ created: 10, cmd: 'npm run api', desc: '', bg: true }], 1000, () => false)!;
+    const orphan = { ...shellOld, id: 'gone:shell', parent: { id: 'gone', label: 'gone' }, label: 'b server' };
+    const order = orderWithShells(sortItems(sessions, 1000), [shellRun, shellOld, orphan], 1000);
+    // Orange first; then the running rows by name: "b server" alone, "m running" with its shell, and
+    // the grey "a old" rides up with its server ("npm run dev") instead of sinking to the bottom.
+    expect(order.map((x) => x.id)).toEqual(['ask', 'gone:shell', 'run', 'run:shell', 'old', 'old:shell']);
   });
 
   it('workflow agents keep a finished row running', () => {

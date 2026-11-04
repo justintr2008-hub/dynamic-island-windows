@@ -1,6 +1,7 @@
 // Claude Status: every Claude session at a glance, the way the Claude Sessions
-// widget showed them: Claude Code, the Claude app and Chrome, with purple
-// background shells, unread dots and progress bars for long runs. The engine
+// widget showed them: Claude Code, the Claude app and Chrome, with background
+// shells on purple rows of their own (under their session, which keeps its own
+// colour), unread dots and progress bars for long runs. The engine
 // (engine.ts) works it all out inside Island; this file draws it and switches
 // to a session when one is clicked.
 
@@ -82,9 +83,9 @@ export class ClaudeStatusActivity extends BaseActivity {
     // A session that just finished pops the island for a moment; one waiting on
     // you holds it open instead (status().urgent).
     const opts = this.ctx.options<{ showDone?: boolean }>();
-    // Claude's own state counts, so a turn that ends with a server still running is still "done".
+    // A background shell has its own row, so a turn that ends with a server still running is still "done".
     for (const r of rows) {
-      const st = r.turn ?? r.state;
+      const st = r.state;
       const before = this.last.get(r.id);
       // Stopping one yourself (Esc) is no news: it only turns red, and glows red a moment.
       if (before && before !== st && r.stopped) this.glow('bad');
@@ -94,7 +95,7 @@ export class ClaudeStatusActivity extends BaseActivity {
         this.saw(st === 'done' ? 'claude-done' : st === 'failed' ? 'claude-error' : 'claude-asks', `claudeStatus:${r.id}`);
       }
     }
-    this.last = new Map(rows.map((r) => [r.id, r.turn ?? r.state]));
+    this.last = new Map(rows.map((r) => [r.id, r.state]));
 
     const sig = (x: StatusRow[]) => JSON.stringify(x);
     if (sig(rows) !== sig(this.rows)) {
@@ -111,6 +112,11 @@ export class ClaudeStatusActivity extends BaseActivity {
   /** Waiting on you: a question, or a turn that failed (not one you stopped yourself). */
   private waiting(): StatusRow[] {
     return this.rows.filter((r) => !r.grey && !r.stopped && (r.state === 'input' || r.state === 'failed'));
+  }
+
+  /** Sessions, not rows: a shell's own row belongs to its session. */
+  private sessions(): number {
+    return new Set(this.rows.map((r) => r.parent ?? r.id)).size;
   }
 
   /** The row the pill talks about: the widget's own order (running first). */
@@ -135,7 +141,7 @@ export class ClaudeStatusActivity extends BaseActivity {
       active: true,
       weight: running || shell || waiting || red ? 'foreground' : 'background',
       urgent: asking.length ? { key: asking.map((r) => `${r.id}@${r.since}`).join(','), level: 'expanded' } : null,
-      summary: waiting ? `${waiting} awaiting you` : `${this.rows.length} Claude session${this.rows.length === 1 ? '' : 's'}`,
+      summary: waiting ? `${waiting} awaiting you` : `${this.sessions()} Claude session${this.sessions() === 1 ? '' : 's'}`,
       // Just finished, failed or stopped, or asking: the island glows that colour all round for a moment.
       beam: this.flash && Date.now() < this.flash.until
         ? { tone: this.flash.tone, motion: 'still' }
@@ -154,7 +160,7 @@ export class ClaudeStatusActivity extends BaseActivity {
   chip(): ChipView | null {
     const t = this.top();
     if (!t) return null;
-    return { icon: 'claude', label: String(this.rows.length), dot: toneOf(t), pulse: t.state === 'running' && !t.grey };
+    return { icon: 'claude', label: String(this.sessions()), dot: toneOf(t), pulse: t.state === 'running' && !t.grey };
   }
 
   render(env: RenderEnv): Seg[] {
@@ -214,7 +220,7 @@ export class ClaudeStatusActivity extends BaseActivity {
         icon: 'claude',
         tone: 'claude',
         title: 'Claude',
-        sub: waiting ? `${waiting} awaiting you` : `${this.rows.length} session${this.rows.length === 1 ? '' : 's'}`,
+        sub: waiting ? `${waiting} awaiting you` : `${this.sessions()} session${this.sessions() === 1 ? '' : 's'}`,
         // Settings > Claude Status > "Show Auto model button" hides it.
         buttons: this.ctx.options<{ showAutoModel?: boolean }>().showAutoModel === false ? [] : [
           {

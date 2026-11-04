@@ -22,11 +22,12 @@ export type StatusState = 'running' | 'shell' | 'input' | 'done' | 'failed' | 'i
 export interface StatusRow {
   id: string;
   label: string;
+  /** Where the session runs (Terminal); for a shell row, the session it belongs to. */
   where: string;
   tag: string;
   state: StatusState;
-  /** Claude's own state when a shell is shown over it ("done" with a server still running). */
-  turn?: StatusState;
+  /** A background shell's own row (purple): the id of the session that started it. */
+  parent?: string;
   word: string;
   since: number;
   grey: boolean;
@@ -45,18 +46,18 @@ export interface Item {
   project: string;
   host: string;
   state: StatusState;
-  turn?: StatusState;
   since: number;
   runStarted: number | null;
   prog: Prog | null;
   unread: boolean;
   visible: boolean;
   label: string;
-  /** A background shell shown over the row (purple). */
+  /** A shell row: its background shells (purple). */
   shell?: { cmd: string; desc: string; created: number; count: number };
+  /** A shell row: the session that started it. */
+  parent?: { id: string; label: string };
   /** The command Claude is waiting on: its bar is closer than the run's. */
   command?: { cmd: string; desc: string; created: number };
-  bgShells?: number;
   /** You pressed Esc mid-turn. */
   stopped?: boolean;
   view?: SessionView;
@@ -129,11 +130,10 @@ export function sourceName(x: Pick<Item, 'source' | 'host'>): string {
 
 const shellsText = (n: number) => `${n} shell${n === 1 ? '' : 's'}`;
 
-export function stateWord(x: Pick<Item, 'state' | 'shell' | 'bgShells' | 'stopped'>): string {
+export function stateWord(x: Pick<Item, 'state' | 'shell' | 'stopped'>): string {
   if (x.state === 'shell') return shellsText(x.shell?.count ?? 1);
   if (x.stopped && x.state === 'failed') return 'stopped';
-  // Claude still working, with background shells too: "running · 1 shell".
-  return x.bgShells ? `${WORDS[x.state]} · ${shellsText(x.bgShells)}` : WORDS[x.state];
+  return WORDS[x.state];
 }
 
 /** Grey rows: idle, or finished a while ago. */
@@ -150,17 +150,36 @@ function unreadDone(x: Item, rk: number): boolean {
   return rk === ORDER.done && x.unread;
 }
 
+function compareItems(a: Item, b: Item, now: number): number {
+  const [ra, la] = rank(a, now);
+  const [rb, lb] = rank(b, now);
+  if (ra !== rb) return ra - rb;
+  const ua = unreadDone(a, ra);
+  const ub = unreadDone(b, rb);
+  if (ua !== ub) return ua ? -1 : 1;
+  if (ua && a.since !== b.since) return b.since - a.since;
+  return la < lb ? -1 : la > lb ? 1 : 0;
+}
+
 export function sortItems(items: Item[], now: number): Item[] {
-  return items.sort((a, b) => {
-    const [ra, la] = rank(a, now);
-    const [rb, lb] = rank(b, now);
-    if (ra !== rb) return ra - rb;
-    const ua = unreadDone(a, ra);
-    const ub = unreadDone(b, rb);
-    if (ua !== ub) return ua ? -1 : 1;
-    if (ua && a.since !== b.since) return b.since - a.since;
-    return la < lb ? -1 : la > lb ? 1 : 0;
+  return items.sort((a, b) => compareItems(a, b, now));
+}
+
+/**
+ * Sessions in order with each shell row right under its session; the pair sorts by
+ * whichever of the two comes first (a server still running keeps a finished session
+ * up with the running ones). A shell whose session is dismissed or gone stands alone.
+ */
+export function orderWithShells(sessions: Item[], shells: Item[], now: number): Item[] {
+  const shellOf = new Map(shells.map((s) => [s.parent?.id, s]));
+  const groups = sessions.map((x) => {
+    const sh = shellOf.get(x.id);
+    shellOf.delete(x.id);
+    return sh ? [x, sh] : [x];
   });
+  for (const sh of shellOf.values()) groups.push([sh]);
+  const lead = (g: Item[]) => g.reduce((a, b) => (compareItems(b, a, now) < 0 ? b : a));
+  return groups.sort((a, b) => compareItems(lead(a), lead(b), now)).flat();
 }
 
 /** Name rows by title, else folder; two with the same name get a short id. */
@@ -201,17 +220,23 @@ export interface LiveShell {
   bg: boolean;
 }
 
+/** A shell row's name: what Claude called the command, else the command itself. */
+function shellName(sh: { cmd: string; desc: string }): string {
+  const name = sh.desc || shellKey(sh.cmd) || 'Shell';
+  return name.length <= 48 ? name : name.slice(0, 47).trimEnd() + '…';
+}
+
 /**
- * The widget's apply_shells: background shells turn a finished row purple; while
- * Claude works it stays blue and says "running · 1 shell". A command Claude
- * waits on is no shell: the row stays blue, its bar can follow that command,
- * and an allowed prompt stops being orange once the command starts. Claude's
- * own state stays in `turn`, so finishing still pops the island.
+ * The widget's apply_shells, with background shells on a row of their own: the
+ * session keeps its colour (blue, green, orange) and its shells get a purple row
+ * under it, returned here. A command Claude waits on is no shell: the row stays
+ * blue, its bar can follow that command, and an allowed prompt stops being orange
+ * once the command starts.
  */
-export function applyShells(x: Item, shells: LiveShell[], now: number, timed: (cmd: string) => boolean): void {
+export function applyShells(x: Item, shells: LiveShell[], now: number, timed: (cmd: string) => boolean): Item | null {
   const live = shells.filter((sh) => now - sh.created >= SHELL_MIN_AGE);
+  if (!live.length) return null;
   const state = x.state;
-  if (!live.length || !['running', 'input', 'done', 'idle'].includes(state)) return;
   const waitedOn = live.filter((sh) => !sh.bg && (state === 'running' || sh.created > x.since));
   if (waitedOn.length && (state === 'running' || state === 'input')) {
     const sh = waitedOn.reduce((a, b) => (b.created > a.created ? b : a));
@@ -222,18 +247,27 @@ export function applyShells(x: Item, shells: LiveShell[], now: number, timed: (c
     x.command = { cmd: sh.cmd, desc: sh.desc, created: sh.created };
   }
   const bg = live.filter((sh) => sh.bg);
-  if (!bg.length) return;
-  if (x.state === 'running' || x.state === 'input') {
-    x.bgShells = bg.length;
-    return;
-  }
-  // The bar follows the shell we can time, else the newest.
+  if (!bg.length) return null;
+  // The row (and its bar) follows the shell we can time, else the newest.
   const pool = bg.filter((sh) => timed(sh.cmd));
   const sh = (pool.length ? pool : bg).reduce((a, b) => (b.created > a.created ? b : a));
-  x.turn = state;
-  x.state = 'shell';
-  x.since = sh.created;
-  x.shell = { cmd: sh.cmd, desc: sh.desc, created: sh.created, count: bg.length };
+  return {
+    id: `${x.id}:shell`,
+    source: x.source,
+    title: x.title,
+    project: x.project,
+    host: x.host,
+    state: 'shell',
+    since: sh.created,
+    runStarted: null,
+    prog: null,
+    unread: false,
+    visible: x.visible,
+    label: shellName(sh),
+    shell: { cmd: sh.cmd, desc: sh.desc, created: sh.created, count: bg.length },
+    parent: { id: x.id, label: x.label || x.title || x.project },
+    view: x.view,
+  };
 }
 
 /** The workflow agents a session started: still working after its turn ended. */
@@ -683,7 +717,7 @@ export class StatusEngine {
     const x = this.items.get(id);
     if (!x) return;
     const now = Date.now() / 1000;
-    this.dismissed[id] = { at: now, state: x.turn ?? x.state };
+    this.dismissed[id] = { at: now, state: x.state };
     // Forget dismissals after two days.
     for (const [k, d] of Object.entries(this.dismissed)) if (now - d.at > 2 * 86400) delete this.dismissed[k];
     save('dismissed', this.dismissed);
@@ -694,11 +728,11 @@ export class StatusEngine {
   async poll(): Promise<StatusRow[]> {
     const now = Date.now() / 1000;
     const [code, chats] = await Promise.all([this.codeItems(now), this.chatItems(now)]);
-    let items = [...code, ...chats];
+    const all = [...code, ...chats];
 
     // A dismissal lasts until the session changes state.
     let changed = false;
-    for (const x of items) {
+    for (const x of all) {
       const d = this.dismissed[x.id];
       if (d && x.state !== d.state) {
         delete this.dismissed[x.id];
@@ -706,20 +740,25 @@ export class StatusEngine {
       }
     }
     if (changed) save('dismissed', this.dismissed);
-    items = items.filter((x) => !isDismissed(x, this.dismissed[x.id]));
+    let items = all.filter((x) => !isDismissed(x, this.dismissed[x.id]));
     labelItems(items);
 
     await this.applyNotifications(items, now);
     await this.applyWorkflows(items, now);
     await this.markUnread(items, now);
+    // Every session's shells, dismissed ones too: a server outlives the session row you put away.
     try {
-      await this.scanShells(items, now);
+      await this.scanShells(all, now);
     } catch (err) {
       this.shellLive = new Map();
       this.log('shells', String(err));
     }
     const timed = (cmd: string) => shellSamples(this.shellTimes, cmd).length > 0;
-    for (const x of items) applyShells(x, this.shellLive.get(x.id) ?? [], now, timed);
+    const shells: Item[] = [];
+    for (const x of all) {
+      const sh = applyShells(x, this.shellLive.get(x.id) ?? [], now, timed);
+      if (sh && !isDismissed(sh, this.dismissed[sh.id])) shells.push(sh);
+    }
 
     // Inactive a while: gone, as if dismissed.
     const stale = items.filter((x) => (x.state === 'done' || x.state === 'failed' || x.state === 'idle') && now - x.since > AUTO_DISMISS_AFTER);
@@ -727,7 +766,7 @@ export class StatusEngine {
       this.items.set(x.id, x);
       this.dismiss(x.id);
     }
-    items = sortItems(items.filter((x) => !stale.includes(x)), now);
+    items = orderWithShells(sortItems(items.filter((x) => !stale.includes(x)), now), shells, now);
     this.items = new Map(items.map((x) => [x.id, x]));
 
     return items.map((x) => {
@@ -735,10 +774,10 @@ export class StatusEngine {
       return {
         id: x.id,
         label: x.label,
-        where: sourceName(x),
+        where: x.parent ? x.parent.label : sourceName(x),
         tag: sourceTag(x),
         state: x.state,
-        turn: x.turn ?? x.state,
+        ...(x.parent ? { parent: x.parent.id } : {}),
         word: stateWord(x),
         since: x.since,
         grey: isStale(x, now),
