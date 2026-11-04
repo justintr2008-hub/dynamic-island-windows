@@ -45,6 +45,13 @@ export interface FileStat {
   mtimeMs: number;
   dir: boolean;
 }
+export interface AutoModelState {
+  installed: boolean;
+  on: boolean;
+  error: string | null;
+  /** It didn't turn on for want of Node.js; installAutoModelNode() gets Island's own copy. */
+  needsNode: boolean;
+}
 export interface DirEntry {
   name: string;
   path: string;
@@ -399,8 +406,13 @@ export const native = {
       { home: '', downloads: '', desktop: '', pictures: '', screenshots: [], appData: '', localAppData: '', islandData: '' },
     ),
 
-  routerOn: () => call<boolean>('claude_router_get', {}, true),
   setRouter: (on: boolean) => call<boolean>('claude_router_set', { on }, on),
+  /** Auto model (src-tauri/src/auto_model.rs): installed in Claude Code, and not paused. */
+  autoModel: () => call<AutoModelState>('claude_auto_model_get', {}, { installed: false, on: false, error: null, needsNode: false }),
+  /** Installs (true) or removes (false) Auto model's hooks; `error` says why it didn't work. */
+  setAutoModel: (on: boolean) => call<AutoModelState>('claude_auto_model_set', { on }, { installed: false, on: false, error: 'Island is not running', needsNode: false }),
+  /** No Node.js on this PC: downloads Island's own (progress: 'auto-model-node' events, {done, total} bytes), then turns Auto model on. */
+  installAutoModelNode: () => call<AutoModelState>('claude_auto_model_node', {}, { installed: false, on: false, error: 'Island is not running', needsNode: false }),
   claudeEnv: () =>
     call<ClaudeEnv | null>('claude_env', {}, null),
   transcriptMeta: (path: string, offset: number, needUser: boolean) => call<TranscriptMeta | null>('claude_transcript_meta', { path, offset, needUser }, null),

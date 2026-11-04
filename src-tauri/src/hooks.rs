@@ -59,7 +59,7 @@ pub fn settings_path() -> PathBuf {
 }
 
 /// The only error that means "start from nothing" is the file not being there.
-fn read_settings() -> Result<Value, String> {
+pub(crate) fn read_settings() -> Result<Value, String> {
     let path = settings_path();
     match std::fs::read(&path) {
         Ok(bytes) => parse_settings(&bytes, &path.display().to_string()),
@@ -206,12 +206,20 @@ pub fn write(install: bool, fp: &str) -> Result<String, String> {
     if current_fingerprint() != fp {
         return Err(format!("{} changed since the preview. Nothing was written; review the new diff.", path.display()));
     }
+    let next = if install { merged(&current) } else { without_ours(&current) };
+    save_settings(&next, if install { "hooks installed" } else { "hooks removed" })
+}
+
+/// Writes settings.json after a dated backup, through a temp file so a crash
+/// never leaves half a file. Returns the backup's path. `what` goes to the log.
+pub(crate) fn save_settings(next: &Value, what: &str) -> Result<String, String> {
+    let path = settings_path();
+    std::fs::create_dir_all(path.parent().unwrap_or(Path::new("."))).map_err(|e| e.to_string())?;
     let backup = backup_path();
     if path.exists() {
         std::fs::copy(&path, &backup).map_err(|e| format!("backup failed: {e}"))?;
     }
-    let next = if install { merged(&current) } else { without_ours(&current) };
-    let mut text = pretty(&next);
+    let mut text = pretty(next);
     text.push('\n');
     let temp = path.with_extension(format!("json.island-{}", std::process::id()));
     std::fs::write(&temp, text.as_bytes()).map_err(|e| format!("write failed: {e}"))?;
@@ -219,7 +227,7 @@ pub fn write(install: bool, fp: &str) -> Result<String, String> {
         let _ = std::fs::remove_file(&temp);
         return Err(format!("write failed: {err}"));
     }
-    crate::log::line(format!("hooks {} (backup {})", if install { "installed" } else { "removed" }, backup.display()));
+    crate::log::line(format!("{what} (backup {})", backup.display()));
     Ok(backup.to_string_lossy().to_string())
 }
 

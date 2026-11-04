@@ -4,6 +4,7 @@
 // On a Mac, a module that is almost all Windows API is swapped for its twin in
 // src/mac/ (same command names), so the Windows file never changes.
 mod app;
+mod auto_model;
 #[cfg_attr(target_os = "macos", path = "mac/agenda.rs")]
 mod agenda;
 #[cfg_attr(target_os = "macos", path = "mac/audio.rs")]
@@ -160,6 +161,9 @@ pub fn run() {
             claude_status::claude_status_open_chat,
             claude_status::claude_router_get,
             claude_status::claude_router_set,
+            auto_model::claude_auto_model_get,
+            auto_model::claude_auto_model_set,
+            auto_model::claude_auto_model_node,
             hooks::hooks_status,
             hooks::hooks_preview,
             hooks::hooks_write,

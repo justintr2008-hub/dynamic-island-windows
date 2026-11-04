@@ -9,7 +9,7 @@ import { SpringSet } from './core/animator';
 import { agoText, pace, resetsIn, resetsOn, SESSION_WINDOW_MS, tokens as fmtTokens, WEEK_WINDOW_MS } from './core/format';
 import { icon, type IconName } from './core/icons';
 import { levelWidth, normalizeWidths, type Anchor, type Level } from './core/layout';
-import { isTauri, native, on, sendTo, type MonitorInfo } from './core/native';
+import { isTauri, native, on, sendTo, type AutoModelState, type MonitorInfo } from './core/native';
 import { availableHere, ctrlKey, optionHere, platform, thisComputer, unavailableReason } from './core/platform';
 import { springAnimate } from './core/renderer';
 import { ACCENTS, cloneSettings, growsOf, migrate, type ActivityConfig, type Settings } from './core/settings';
@@ -290,11 +290,71 @@ function cardBody(meta: ActivityMeta): HTMLElement {
     // Local AI's model is picked in its panel below, not typed; System Stats' picks live in its table.
     ...meta.options
       .filter((o) => optionHere(o) && !(meta.id === 'local' && o.key === 'model') && !(meta.id === 'system' && SYSTEM_TABLE_KEYS.has(o.key)))
-      .flatMap((o) => (meta.id === 'system' && o.key === 'always' ? [optionRow(meta.id, o), systemTable()] : [optionRow(meta.id, o)])),
+      .flatMap((o) =>
+        meta.id === 'system' && o.key === 'always'
+          ? [optionRow(meta.id, o), systemTable()]
+          : meta.id === 'claudeStatus' && o.key === 'showAutoModel'
+            ? [autoModelRow(), optionRow(meta.id, o)]
+            : [optionRow(meta.id, o)],
+      ),
   ]);
   if (meta.id === 'claude') body.append(claudePanel());
   if (meta.id === 'local') body.append(localPanel());
   return body;
+}
+
+/**
+ * Activities > Claude Status > Auto model: installs the model router and the model check
+ * in Claude Code (src-tauri/src/auto_model.rs), or removes them. The switch shows what is
+ * really in Claude Code's settings, not a saved option.
+ */
+function autoModelRow(): HTMLElement {
+  const note = h('div', { class: 'row-help' });
+  // Shown only when turning on failed for want of Node.js: Island gets its own copy, then turns it on.
+  const install = h('button', { class: 'btn primary', text: 'Install Node.js and turn on', hidden: true, style: 'margin-top: 8px', onclick: () => void getNode() });
+  const sw = toggle(false, (on) => void flip(on), 'Auto model');
+  const show = (installed: boolean, text: string, warn = false) => {
+    sw.classList.toggle('on', installed);
+    sw.setAttribute('aria-checked', String(installed));
+    note.className = warn ? 'row-help warn' : 'row-help';
+    note.textContent = text;
+  };
+  const busy = (yes: boolean) => {
+    if (yes) sw.setAttribute('disabled', '');
+    else sw.removeAttribute('disabled');
+    install.disabled = yes;
+  };
+  const done = (s: AutoModelState) => {
+    install.hidden = !s.needsNode;
+    if (s.error) show(s.installed, s.error, true);
+    else show(s.installed, s.installed ? 'On for every Claude Code session. A backup of its settings.json was saved next to it.' : 'Off. Its hooks are gone from Claude Code; your own hooks stay.');
+  };
+  const flip = async (on: boolean) => {
+    busy(true);
+    show(on, on ? 'Adding the hooks to Claude Code…' : 'Removing the hooks…');
+    const s = await native.setAutoModel(on);
+    busy(false);
+    done(s);
+  };
+  const getNode = async () => {
+    busy(true);
+    show(false, 'Downloading Node.js…');
+    const stop = await on<{ done: number; total: number }>('auto-model-node', (p) => {
+      if (p.total) show(false, `Downloading Node.js… ${Math.round((p.done / p.total) * 100)}% of ${Math.round(p.total / 1e6)} MB`);
+    });
+    const s = await native.installAutoModelNode();
+    stop();
+    busy(false);
+    done(s);
+  };
+  void native.autoModel().then((s) => show(s.installed, s.installed ? (s.on ? 'On.' : 'Paused from the island’s button.') : ''));
+  const r = row(
+    'Auto model',
+    'Before a prompt runs on a far too strong or too weak Claude model, Claude Code stops and says which model to switch to. When a chat compacts, passes 500k tokens or ends, it tells you if you used the right one: what a cheaper model would have saved, or how much more often a stronger one would have got it right. Adds hooks to Claude Code. Each check asks Claude, so it uses a little of your Claude usage.',
+    sw,
+  );
+  r.querySelector('.row-text')?.append(note, install);
+  return r;
 }
 
 function optionRow(id: string, o: OptionSpec): HTMLElement {
