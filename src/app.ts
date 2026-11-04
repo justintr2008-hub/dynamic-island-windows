@@ -310,8 +310,6 @@ function cardBody(meta: ActivityMeta): HTMLElement {
  */
 function autoModelRow(): HTMLElement {
   const note = h('div', { class: 'row-help' });
-  // Shown only when turning on failed for want of Node.js: Island gets its own copy, then turns it on.
-  const install = h('button', { class: 'btn primary', text: 'Install Node.js and turn on', hidden: true, style: 'margin-top: 8px', onclick: () => void getNode() });
   const sw = toggle(false, (on) => void flip(on), 'Auto model');
   const show = (installed: boolean, text: string, warn = false) => {
     sw.classList.toggle('on', installed);
@@ -322,29 +320,36 @@ function autoModelRow(): HTMLElement {
   const busy = (yes: boolean) => {
     if (yes) sw.setAttribute('disabled', '');
     else sw.removeAttribute('disabled');
-    install.disabled = yes;
   };
   const done = (s: AutoModelState) => {
-    install.hidden = !s.needsNode;
-    // Missing Node.js is no failure: the button right under it fixes it.
-    if (s.error) show(s.installed, s.error, !s.needsNode);
+    if (s.error) show(s.installed, s.error, true);
     else show(s.installed, s.installed ? 'On for every Claude Code session. A backup of its settings.json was saved next to it.' : 'Off. Its hooks are gone from Claude Code; your own hooks stay.');
   };
-  const flip = async (on: boolean) => {
+  const flip = async (want: boolean) => {
     busy(true);
-    show(on, on ? 'Adding the hooks to Claude Code…' : 'Removing the hooks…');
-    const s = await native.setAutoModel(on);
-    busy(false);
-    done(s);
-  };
-  const getNode = async () => {
-    busy(true);
-    show(false, 'Downloading Node.js…');
-    const stop = await on<{ done: number; total: number }>('auto-model-node', (p) => {
-      if (p.total) show(false, `Downloading Node.js… ${Math.round((p.done / p.total) * 100)}% of ${Math.round(p.total / 1e6)} MB`);
-    });
-    const s = await native.installAutoModelNode();
-    stop();
+    show(want, want ? 'Adding the hooks to Claude Code…' : 'Removing the hooks…');
+    let s = await native.setAutoModel(want);
+    // No Node.js on this PC: say what is about to be downloaded, then do it all in one go.
+    if (want && s.needsNode) {
+      show(false, '');
+      const mb = Math.round(s.nodeDownloadBytes / 1e6);
+      const yes = await confirmBox(
+        'Download Node.js?',
+        `Auto model runs on Node.js, which isn’t on this PC. Island will download it (${mb} MB) from nodejs.org into its own folder, then turn Auto model on. Nothing else on your PC changes.`,
+        `Download ${mb} MB and turn on`,
+      );
+      if (!yes) {
+        busy(false);
+        show(false, 'Still off: Auto model needs Node.js.');
+        return;
+      }
+      show(true, 'Downloading Node.js…');
+      const stop = await on<{ done: number; total: number }>('auto-model-node', (p) => {
+        if (p.total) show(true, p.done < p.total ? `Downloading Node.js… ${Math.round((p.done / p.total) * 100)}% of ${mb} MB` : 'Setting up Auto model…');
+      });
+      s = await native.installAutoModelNode();
+      stop();
+    }
     busy(false);
     done(s);
   };
@@ -354,8 +359,46 @@ function autoModelRow(): HTMLElement {
     'Before a prompt runs on a far too strong or too weak Claude model, Claude Code stops and says which model to switch to. When a chat compacts, passes 500k tokens or ends, it tells you if you used the right one: what a cheaper model would have saved, or how much more often a stronger one would have got it right. Adds hooks to Claude Code. Each check asks Claude, so it uses a little of your Claude usage.',
     sw,
   );
-  r.querySelector('.row-text')?.append(note, install);
+  r.querySelector('.row-text')?.append(note);
   return r;
+}
+
+/**
+ * A small yes/no box over the window. Resolves true on the main button (or Enter),
+ * false on Cancel, Esc or a click outside.
+ */
+function confirmBox(title: string, text: string, okLabel: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    const ok = h('button', { class: 'btn primary', text: okLabel });
+    const cancel = h('button', { class: 'btn ghost', text: 'Cancel' });
+    const box = h('div', { class: 'modal', role: 'dialog', 'aria-modal': 'true', 'aria-label': title }, [
+      h('h3', { text: title }),
+      h('p', { text }),
+      h('div', { class: 'modal-actions' }, [ok, cancel]),
+    ]);
+    const back = h('div', { class: 'modal-back' }, [box]);
+    const close = (answer: boolean) => {
+      document.removeEventListener('keydown', keys, true);
+      back.remove();
+      resolve(answer);
+    };
+    const keys = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') close(false);
+      else if (e.key === 'Enter') close(true);
+      else return;
+      e.preventDefault();
+      e.stopPropagation();
+    };
+    ok.addEventListener('click', () => close(true));
+    cancel.addEventListener('click', () => close(false));
+    back.addEventListener('pointerdown', (e) => {
+      if (e.target === back) close(false);
+    });
+    document.addEventListener('keydown', keys, true);
+    document.body.append(back);
+    springAnimate(box, [{ opacity: 0, transform: 'scale(0.96)' }, { opacity: 1, transform: 'none' }], springs.content);
+    ok.focus();
+  });
 }
 
 function optionRow(id: string, o: OptionSpec): HTMLElement {

@@ -22,12 +22,12 @@ use crate::nowindow::NoWindow;
 
 const NODE_VERSION: &str = "v24.22.2";
 #[cfg(target_arch = "aarch64")]
-const NODE_BUILD: (&str, &str) = ("win-arm64", "f47968c213105077f64c6510f007632c0ca2574802a0b5067c327c49abe1c468");
+const NODE_BUILD: (&str, &str, u64) = ("win-arm64", "f47968c213105077f64c6510f007632c0ca2574802a0b5067c327c49abe1c468", 33_789_289);
 #[cfg(not(target_arch = "aarch64"))]
-const NODE_BUILD: (&str, &str) = ("win-x64", "ca1bff5d8ead13c9f2ea404a176db46bd430704d5b5113734049fa365e7799e2");
+const NODE_BUILD: (&str, &str, u64) = ("win-x64", "ca1bff5d8ead13c9f2ea404a176db46bd430704d5b5113734049fa365e7799e2", 37_754_834);
 
-/// What turning on says when there is no Node.js; the Activities row then offers to get it.
-const NEEDS_NODE: &str = "Auto model needs Node.js to run. Island can install its own copy (about 38 MB, nothing else changes on this PC).";
+/// What turning on says when there is no Node.js; the Activities row then asks to download it.
+const NEEDS_NODE: &str = "Auto model needs Node.js, which isn't on this PC.";
 
 const FILES: &[(&str, &str)] = &[
     ("router.mjs", include_str!("../model-router/router.mjs")),
@@ -57,6 +57,8 @@ pub struct AutoModel {
     pub error: Option<String>,
     /// It didn't turn on for want of Node.js: Island can install its own (`claude_auto_model_node`).
     pub needs_node: bool,
+    /// How big that download is, to say before starting it.
+    pub node_download_bytes: u64,
 }
 
 fn dir() -> PathBuf {
@@ -171,6 +173,7 @@ fn state(error: Option<String>) -> AutoModel {
         installed: read_settings().map(|s| installed_in(&s)).unwrap_or(false),
         on: !dir().join("off").exists(),
         needs_node: error.as_deref() == Some(NEEDS_NODE),
+        node_download_bytes: NODE_BUILD.2,
         error,
     }
 }
@@ -205,7 +208,7 @@ async fn install_node(mut progress: impl FnMut(u64, u64)) -> Result<(), String> 
     if island_node().exists() {
         return Ok(());
     }
-    let (build, sha256) = NODE_BUILD;
+    let (build, sha256, _) = NODE_BUILD;
     let url = format!("https://nodejs.org/dist/{NODE_VERSION}/node-{NODE_VERSION}-{build}.zip");
     let zip = node_dir().join(format!("node-{NODE_VERSION}-{build}.zip"));
     let mut last = 0u64;
