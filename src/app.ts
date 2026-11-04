@@ -326,7 +326,8 @@ function autoModelRow(): HTMLElement {
   };
   const done = (s: AutoModelState) => {
     install.hidden = !s.needsNode;
-    if (s.error) show(s.installed, s.error, true);
+    // Missing Node.js is no failure: the button right under it fixes it.
+    if (s.error) show(s.installed, s.error, !s.needsNode);
     else show(s.installed, s.installed ? 'On for every Claude Code session. A backup of its settings.json was saved next to it.' : 'Off. Its hooks are gone from Claude Code; your own hooks stay.');
   };
   const flip = async (on: boolean) => {
