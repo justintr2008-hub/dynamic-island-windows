@@ -4,7 +4,8 @@ import type { PetSignal } from '../core/pet';
 import type { ActivityStatus, ChipView, RenderEnv, SheetEnv } from '../core/activity';
 import { clock } from '../core/format';
 import type { Seg } from '../core/segments';
-import type { SheetButton, Tile } from '../core/sheet';
+import type { SheetButton, SheetRow, SheetView, Tile } from '../core/sheet';
+import { tileCard } from '../core/tilecard';
 import { BaseActivity, chime } from './base';
 
 type Mode = 'timer' | 'stopwatch' | 'focus';
@@ -19,6 +20,8 @@ interface TimerState {
   /** Stopwatch: when it started (running) and time banked before the last pause. */
   startedAt: number | null;
   bankedMs: number;
+  /** Stopwatch: the elapsed time at each Lap press. */
+  laps: number[];
   running: boolean;
   phase: 'focus' | 'break';
   round: number;
@@ -28,6 +31,14 @@ interface TimerState {
 const DONE_SHOW_MS = 60000;
 /** The dial's ceiling: 23:59:59. */
 const MAX_SECONDS = 86399;
+/** Laps a stopwatch's card lists (the newest). */
+const SHOWN_LAPS = 5;
+
+/** 0:12.34: a lap to the hundredth. */
+function lapClock(ms: number): string {
+  const cs = Math.max(0, Math.floor(ms / 10));
+  return `${clock(Math.floor(cs / 100) * 1000)}.${String(cs % 100).padStart(2, '0')}`;
+}
 
 /** "5 min", "1h 30m", "45s", "2m 30s": a length as people say it. */
 export function shortLength(secs: number): string {
@@ -67,14 +78,14 @@ export class TimerActivity extends BaseActivity {
   // ---------------------------------------------------------------- control
 
   startTimer(ms: number, label = 'Timer'): void {
-    this.t = { mode: 'timer', label, endsAt: Date.now() + ms, totalMs: ms, remainingMs: ms, startedAt: null, bankedMs: 0, running: true, phase: 'focus', round: 1, doneAt: null };
+    this.t = { mode: 'timer', label, endsAt: Date.now() + ms, totalMs: ms, remainingMs: ms, startedAt: null, bankedMs: 0, laps: [], running: true, phase: 'focus', round: 1, doneAt: null };
     this.ctx.surface({ key: 'start', ms: 2500 });
     this.saw('timer-start', 'timer:start');
     this.ctx.update();
   }
 
   startStopwatch(): void {
-    this.t = { mode: 'stopwatch', label: 'Stopwatch', endsAt: null, totalMs: 0, remainingMs: 0, startedAt: Date.now(), bankedMs: 0, running: true, phase: 'focus', round: 1, doneAt: null };
+    this.t = { mode: 'stopwatch', label: 'Stopwatch', endsAt: null, totalMs: 0, remainingMs: 0, startedAt: Date.now(), bankedMs: 0, laps: [], running: true, phase: 'focus', round: 1, doneAt: null };
     this.ctx.surface({ key: 'start', ms: 2000 });
     this.ctx.update();
   }
@@ -90,6 +101,7 @@ export class TimerActivity extends BaseActivity {
       remainingMs: ms,
       startedAt: null,
       bankedMs: 0,
+      laps: [],
       running: true,
       phase,
       round,
@@ -133,6 +145,12 @@ export class TimerActivity extends BaseActivity {
   private elapsedMs(now: number): number {
     const t = this.t!;
     return t.bankedMs + (t.running && t.startedAt ? now - t.startedAt : 0);
+  }
+
+  /** The lap running now: its number and how long it has gone. */
+  private currentLap(now: number): { n: number; ms: number } {
+    const t = this.t!;
+    return { n: t.laps.length + 1, ms: this.elapsedMs(now) - (t.laps[t.laps.length - 1] ?? 0) };
   }
 
   private leftMs(now: number): number {
@@ -213,9 +231,14 @@ export class TimerActivity extends BaseActivity {
     }
 
     const name = t.mode === 'focus' ? t.label : t.mode === 'stopwatch' ? 'Stopwatch' : 'Timer';
-    const what = t.mode === 'focus' ? `Round ${t.round}` : t.mode === 'stopwatch' ? 'Counting up' : t.label;
+    const lap = t.mode === 'stopwatch' && t.laps.length ? this.currentLap(env.now) : null;
+    const what = t.mode === 'focus' ? `Round ${t.round}` : lap ? `Lap ${lap.n} · ${clock(lap.ms)}` : t.mode === 'stopwatch' ? 'Counting up' : t.label;
+    // A stopwatch's Lap while it runs, Reset while it's paused, like the iPhone's.
+    const sw: SheetButton[] =
+      t.mode !== 'stopwatch' ? [] : t.running ? [{ key: 'lap', icon: 'flag', action: 'lap', style: 'secondary', tip: 'Lap' }] : [{ key: 'reset', icon: 'refresh', action: 'reset', style: 'secondary', tip: 'Reset' }];
     const buttons: SheetButton[] = env.interactive
       ? [
+          ...sw,
           { key: 'toggle', icon: t.running ? 'pause' : 'play', action: 'toggle', style: 'secondary', tip: t.running ? 'Pause' : 'Resume' },
           { key: 'stop', icon: 'x', action: 'stop', style: 'ghost', tip: 'Stop' },
         ]
@@ -225,6 +248,17 @@ export class TimerActivity extends BaseActivity {
       tone: t.running ? 'accent' : undefined,
       body: { k: 'actions', icon: this.iconName(), label: `${name} ${this.timeText(env.now)}`, sub: t.running ? what : 'Paused', buttons },
     };
+  }
+
+  /** Pointed at, a stopwatch with laps: its tile's card, then the laps, newest first. */
+  sheet(env: SheetEnv): SheetView | null {
+    const t = this.t;
+    if (env.reason !== 'hover' || t?.mode !== 'stopwatch' || !t.laps.length) return null;
+    const tile = this.tile(env);
+    if (!tile) return null;
+    const laps: SheetRow[] = t.laps.map((at, i) => ({ key: `lap${i + 1}`, title: `Lap ${i + 1}`, badge: lapClock(at - (t.laps[i - 1] ?? 0)) }));
+    // The key the tile's own card has, so the first lap only adds the list under it.
+    return { key: 'tile-card', merge: true, blocks: [...tileCard(tile, 'Timer', 'timer'), { t: 'rows', key: 'laps', items: laps.reverse().slice(0, SHOWN_LAPS) }] };
   }
 
   render(env: RenderEnv): Seg[] {
@@ -259,7 +293,7 @@ export class TimerActivity extends BaseActivity {
     const icon: Seg = { t: 'icon', key: 'icon', icon: this.iconName(), tone, anim: t.running ? undefined : 'pulse', prio: 0 };
     if (env.level === 'compact' || env.level === 'idle') return [icon, { ...time, side: 'end' }];
 
-    const label = t.mode === 'focus' ? `${t.label} · ${t.round}` : t.label;
+    const label = t.mode === 'focus' ? `${t.label} · ${t.round}` : t.mode === 'stopwatch' && t.laps.length ? `Lap ${t.laps.length + 1}` : t.label;
     const segs: Seg[] = [icon, { t: 'text', key: 'label', text: label, tone: 'muted', prio: 4 }];
     if (t.mode !== 'stopwatch') {
       segs.push({ t: 'progress', key: 'bar', value: t.totalMs ? 1 - this.leftMs(now) / t.totalMs : 0, tone, w: env.level === 'maximum' ? 170 : 90, prio: 5, side: 'center' });
@@ -267,6 +301,8 @@ export class TimerActivity extends BaseActivity {
     segs.push({ ...time, side: 'end' });
     if (env.level === 'maximum') {
       if (t.mode !== 'stopwatch') segs.push({ t: 'button', key: 'add', label: '+1m', action: 'add', arg: 60000, style: 'ghost', side: 'end', prio: 4 });
+      else if (t.running) segs.push({ t: 'button', key: 'lap', label: 'Lap', action: 'lap', style: 'ghost', side: 'end', prio: 3 });
+      else segs.push({ t: 'button', key: 'reset', label: 'Reset', action: 'reset', style: 'ghost', side: 'end', prio: 3 });
       segs.push(
         { t: 'button', key: 'toggle', icon: t.running ? 'pause' : 'play', action: 'toggle', style: 'secondary', side: 'end', prio: 1, tip: t.running ? 'Pause' : 'Resume' },
         { t: 'button', key: 'stop', icon: 'x', action: 'stop', style: 'ghost', side: 'end', prio: 2, tip: 'Stop' },
@@ -334,6 +370,16 @@ export class TimerActivity extends BaseActivity {
         }
         break;
       }
+      case 'lap':
+        if (t.mode === 'stopwatch' && t.running) t.laps.push(this.elapsedMs(now));
+        break;
+      case 'reset':
+        // Back to 0:00 with no laps; a running stopwatch keeps going from there.
+        if (t.mode !== 'stopwatch') return;
+        t.bankedMs = 0;
+        t.startedAt = t.running ? now : null;
+        t.laps = [];
+        break;
       case 'restart':
         if (t.mode === 'focus') this.startFocus(t.round, t.phase);
         else this.startTimer(t.totalMs || 300000, t.label);

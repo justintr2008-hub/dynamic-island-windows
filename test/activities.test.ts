@@ -230,6 +230,44 @@ describe('timer', () => {
     act.action('start-secs', 90);
     expect(act.status()).toMatchObject({ active: true, summary: '1m 30s timer 1:30' });
   });
+
+  it('a stopwatch laps while running and resets while paused', async () => {
+    const { act } = await boot(new TimerActivity());
+    const sheetEnv = (reason: 'hover' | 'open' = 'hover') => ({ reason, now: Date.now(), width: 300, vertical: false, interactive: true, surfaced: null });
+    const keys = () => {
+      const b = act.tile(sheetEnv('open'))!.body;
+      return b.k === 'actions' ? b.buttons.map((x) => x.key) : [];
+    };
+    act.action('stopwatch', null);
+    expect(keys()).toEqual(['lap', 'toggle', 'stop']);
+    expect(act.sheet(sheetEnv())).toBeNull(); // no laps yet: the tile's own card
+
+    await tick(12340);
+    act.action('lap', null);
+    await tick(5000);
+    act.action('lap', null);
+    await tick(3000);
+    expect(act.render(env('maximum')).find((s) => s.key === 'label')).toMatchObject({ text: 'Lap 3' });
+    expect(act.tile(sheetEnv('open'))!.body).toMatchObject({ label: 'Stopwatch 0:20', sub: 'Lap 3 · 0:03' });
+    const card = act.sheet(sheetEnv())!;
+    expect(card).toMatchObject({ key: 'tile-card', merge: true });
+    const rows = card.blocks.find((b) => b.t === 'rows');
+    expect(rows?.t === 'rows' && rows.items.map((r) => [r.title, r.badge])).toEqual([
+      ['Lap 2', '0:05.00'],
+      ['Lap 1', '0:12.34'],
+    ]);
+    expect(act.sheet({ ...sheetEnv(), reason: 'surfaced' })).toBeNull();
+
+    act.action('toggle', null); // pause: Lap gives way to Reset
+    expect(keys()).toEqual(['reset', 'toggle', 'stop']);
+    act.action('lap', null); // a paused stopwatch takes no laps
+    act.action('reset', null);
+    expect(act.status()).toMatchObject({ active: true, summary: 'Stopwatch 0:00' });
+    expect(act.sheet(sheetEnv())).toBeNull();
+    act.action('toggle', null);
+    await tick(2000);
+    expect(act.status()).toMatchObject({ summary: 'Stopwatch 0:02' });
+  });
 });
 
 describe('sound', () => {
