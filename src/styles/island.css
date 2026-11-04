@@ -1074,6 +1074,9 @@ html.card-merged .chat { opacity: 0; pointer-events: none; }
 .sb-meter.tone-warn { color: var(--warn); }
 .sb-meter.tone-good { color: var(--good); }
 .sb-meter.tone-purple { color: var(--purple); }
+/* A meter that opens something: the same hover as a row, padded out without moving its content. */
+.sb-meter[data-action] { cursor: pointer; margin: -5px -8px; padding: 5px 8px; border-radius: 12px; transition: background-color 0.16s ease; }
+.sb-meter[data-action]:hover { background: rgba(var(--ink), 0.07); }
 
 /* now playing: the iPhone's expanded music island */
 .sb-player { display: flex; flex-direction: column; gap: 14px; padding: 4px 6px 2px; }

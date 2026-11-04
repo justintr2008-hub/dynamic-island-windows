@@ -219,6 +219,14 @@ export interface SysSample {
   gpu: number | null;
   top: { name: string; cpu: number } | null;
 }
+/** One app (its processes added up) in the list of what uses the most. */
+export interface AppUse {
+  name: string;
+  exe: string;
+  /** Percent of the whole CPU or GPU, or bytes of RAM. */
+  value: number;
+  count: number;
+}
 export interface NetSample {
   rxBps: number;
   txBps: number;
@@ -429,6 +437,8 @@ export const native = {
   micSetMute: (muted: boolean) => call<boolean>('mic_set_mute', { muted }, false),
   powerState: () => call<PowerState | null>('power_state', {}, null),
   sysSample: (withTop: boolean) => call<SysSample | null>('sys_sample', { withTop }, null),
+  /** The apps using the most CPU, RAM or GPU, biggest first. */
+  sysTop: (kind: 'cpu' | 'mem' | 'gpu', limit = 5) => call<AppUse[]>('sys_top', { kind, limit }, []),
   netSample: () => call<NetSample | null>('net_sample', {}, null),
   clipboardSetText: (text: string) => call<boolean>('clipboard_set_text', { text }, false),
   clipboardCopyImage: (path: string) => call<boolean>('clipboard_copy_image', { path }, false),

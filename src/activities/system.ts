@@ -1,10 +1,11 @@
 // System stats: CPU, memory and GPU. Quiet until something spikes, unless
-// "Always show" is on.
+// "Always show" is on. Clicking a bar on the hover card lists the apps using
+// the most of it, kept fresh while the card is open.
 
 import type { PetSignal } from '../core/pet';
 import type { ActivityStatus, ChipView, RenderEnv, SheetEnv } from '../core/activity';
 import { bytes } from '../core/format';
-import { native, type SysSample } from '../core/native';
+import { native, type AppUse, type SysSample } from '../core/native';
 import type { Seg } from '../core/segments';
 import type { Block, SheetView, Tile } from '../core/sheet';
 import { BaseActivity } from './base';
@@ -30,6 +31,17 @@ const FAST_MS = 2000;
 const SPIKE_MS = 6000;
 /** Samples in a row at or above the threshold before it counts as a spike. */
 const SPIKE_SAMPLES = 3;
+/** The open list of apps refreshes this often... */
+const APPS_MS = 2000;
+/** ...and closes once the card has been gone this long (the next hover starts with bars only). */
+const APPS_GONE_MS = 5000;
+const APPS_SHOWN = 5;
+
+/** 12% / 3.4% / <0.1% */
+function pct(v: number): string {
+  if (v >= 9.95) return `${Math.round(v)}%`;
+  return v >= 0.05 ? `${v.toFixed(1)}%` : '<0.1%';
+}
 
 export class SystemActivity extends BaseActivity {
   private s: SysSample | null = null;
@@ -39,9 +51,43 @@ export class SystemActivity extends BaseActivity {
   private spiking = false;
   private memHigh = false;
   private event: { kind: 'cpu' | 'mem'; at: number } | null = null;
+  /** The bar clicked open on the card, and the apps using the most of it (null while loading). */
+  private focus: Stat | null = null;
+  private apps: AppUse[] | null = null;
+  private appsAt = 0;
+  private appsBusy = false;
+  /** When the hover card was last asked for. */
+  private cardAt = 0;
 
   constructor() {
     super('system');
+  }
+
+  /** Clicking a bar opens its list of apps; clicking it again closes it. */
+  action(name: string, arg: unknown): void {
+    if (name !== 'focus' || typeof arg !== 'string' || !(arg in STATS)) return;
+    this.focus = this.focus === arg ? null : (arg as Stat);
+    this.apps = null;
+    this.appsAt = 0;
+    if (this.focus) void this.loadApps();
+    this.ctx.update();
+  }
+
+  private async loadApps(): Promise<void> {
+    const kind = this.focus;
+    if (!kind || this.appsBusy) return;
+    this.appsBusy = true;
+    const list = await native.sysTop(kind, APPS_SHOWN);
+    this.appsBusy = false;
+    if (!this.alive) return;
+    // Another bar was clicked meanwhile: this list is for the old one.
+    if (this.focus !== kind) {
+      if (this.focus) void this.loadApps();
+      return;
+    }
+    this.apps = list;
+    this.appsAt = Date.now();
+    this.ctx.update();
   }
 
   protected init(): void {
@@ -76,6 +122,13 @@ export class SystemActivity extends BaseActivity {
   }
 
   private async tick(): Promise<void> {
+    if (this.focus) {
+      const now = Date.now();
+      if (now - this.cardAt > APPS_GONE_MS) {
+        this.focus = null;
+        this.apps = null;
+      } else if (now - this.appsAt >= APPS_MS) void this.loadApps();
+    }
     const o = this.opts();
     const every = o.always || this.streak > 0 || this.spiking ? FAST_MS : SLOW_MS;
     if (this.busy || Date.now() - this.lastAt < every - 50) return;
@@ -153,15 +206,38 @@ export class SystemActivity extends BaseActivity {
       mem: `${bytes(s.memUsed)} of ${bytes(s.memTotal)}`,
       gpu: undefined,
     };
-    // The card is the expanded view's stats, as bars.
+    // The card is the expanded view's stats, as bars; a clicked bar has its apps under it.
     const picks = this.picks(s, o.expanded, o.order);
+    this.cardAt = Date.now();
     const blocks: Block[] = [
       { t: 'head', key: 'head', icon: picks[0].icon, tone: 'accent', title: 'System' },
-      ...picks.map((p): Block => ({
-        t: 'meter', key: p.key, label: p.label, value: p.pct / 100, pace: null, text: `${p.pct}%`, sub: sub[p.key], tone: p.pct >= warn[p.key] ? 'bad' : 'accent',
-      })),
+      ...picks.flatMap((p): Block[] => {
+        const meter: Block = {
+          t: 'meter', key: p.key, label: p.label, value: p.pct / 100, pace: null, text: `${p.pct}%`, sub: sub[p.key], tone: p.pct >= warn[p.key] ? 'bad' : 'accent', action: 'focus', arg: p.key,
+        };
+        return this.focus === p.key ? [meter, this.appsBlock(p.key, s)] : [meter];
+      }),
     ];
     return { key: 'system', blocks, merge: true };
+  }
+
+  /** The apps using the most of one stat, each with its share of the whole machine. */
+  private appsBlock(stat: Stat, s: SysSample): Block {
+    const key = `apps-${stat}`;
+    if (!this.apps) return { t: 'text', key, text: 'Checking…', tone: 'muted', size: 'sm' };
+    if (!this.apps.length) return { t: 'text', key, text: stat === 'gpu' ? 'No app is using the GPU' : 'Could not read the apps', tone: 'muted', size: 'sm' };
+    return {
+      t: 'rows',
+      key,
+      items: this.apps.map((a) => ({
+        key: a.exe,
+        title: a.name,
+        tip: a.count > 1 ? `${a.exe} · ${a.count} processes` : a.exe,
+        bar: stat === 'mem'
+          ? { value: s.memTotal > 0 ? a.value / s.memTotal : 0, text: bytes(a.value), tone: 'accent' }
+          : { value: a.value / 100, text: pct(a.value), tone: 'accent' },
+      })),
+    };
   }
 
   /** CPU as the number, memory underneath; red while the CPU is past the spike threshold. */

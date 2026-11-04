@@ -87,7 +87,8 @@ export type Block =
   | { t: 'buttons'; key: string; items: SheetButton[]; align?: 'start' | 'end' | 'fill' }
   /** Never focused on its own: clicking it engages it (`engage` fires), Enter sends `action` with the text. */
   | { t: 'input'; key: string; placeholder: string; action: string; engage?: string; hint?: string }
-  | { t: 'meter'; key: string; label: string; value: number; pace?: number | null; text: string; sub?: string; tone?: Tone; tip?: string }
+  /** `action`: the whole meter can be clicked. */
+  | { t: 'meter'; key: string; label: string; value: number; pace?: number | null; text: string; sub?: string; tone?: Tone; tip?: string; action?: string; arg?: unknown }
   | { t: 'rows'; key: string; items: SheetRow[] }
   | { t: 'choices'; key: string; items: Choice[] }
   | { t: 'stats'; key: string; items: Array<{ key: string; label: string; value: string; tone?: Tone; tip?: string }> }
@@ -184,6 +185,8 @@ export function mapActions(blocks: Block[], fn: (action: string) => string): Blo
         return { ...b, items: b.items.map(btn) };
       case 'input':
         return { ...b, action: fn(b.action), engage: b.engage ? fn(b.engage) : undefined };
+      case 'meter':
+        return b.action ? { ...b, action: fn(b.action) } : b;
       case 'rows':
         return { ...b, items: b.items.map(row) };
       case 'choices':
@@ -1116,6 +1119,8 @@ export class SheetRenderer {
     if (b.pace != null) pace.style.left = `${clamp01(b.pace) * 100}%`;
     if (b.tip) e.title = b.tip;
     else e.removeAttribute('title');
+    if (b.action) this.bind(e, b.action, b.arg);
+    else delete e.dataset.action;
   }
 
   private buildPlayer(b: Extract<Block, { t: 'player' }>): HTMLElement {
