@@ -274,6 +274,7 @@ export const CATALOG: ActivityMeta[] = [
     options: [
       { key: 'showDone', type: 'toggle', label: 'Pop up when a session finishes', help: 'Shows the island for a moment when a session is done or fails. One that needs you (orange) always opens it, until you answer or tap away.', default: true },
       { key: 'showAutoModel', type: 'toggle', label: 'Show Auto model button', help: 'Shows the Auto model on/off button when the island expands. Auto model warns you before a prompt runs on a far too strong or too weak Claude model.', default: true },
+      { key: 'glowInFront', type: 'toggle', label: 'Running glow in front of everything', help: 'While a session runs (blue), the blue glow stays on round the island even when music or another activity is in front, over that activity’s own glow. Something that needs you, like a low battery, still shows over it. Off: the blue glow shows only when Claude Status is in front, or when nothing in front has a glow.', default: true },
     ],
   },
   {

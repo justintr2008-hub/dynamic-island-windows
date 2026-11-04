@@ -146,6 +146,8 @@ export class ClaudeStatusActivity extends BaseActivity {
             : running
               ? { tone: 'info', motion: 'orbit' }
               : null,
+      // Running, the blue light stays on round the pill whatever is in front (unless switched off).
+      beamBehind: running && this.ctx.options<{ glowInFront?: boolean }>().glowInFront !== false ? { tone: 'info', motion: 'orbit' } : null,
     };
   }
 

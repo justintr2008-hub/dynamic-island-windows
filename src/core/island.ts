@@ -8,6 +8,7 @@
 import { CATALOG_BY_ID } from '../activities/catalog';
 import type { Activity, ActivityContext, ActivityStatus, RenderEnv, SheetEnv, SurfaceOptions } from './activity';
 import { setReducedMotion } from './animator';
+import { pillBeam } from './beam';
 import { BubbleView } from './bubble';
 import { ChatBar, type ChatAction, type ChatView } from './chat';
 import { lookFor } from './looks';
@@ -615,7 +616,7 @@ export class Island {
       this.renderer.bump();
     }
     this.composeSheet(hidden ? null : choice, statuses, now, orient, w, immediate);
-    const beam = pStatus?.beam ?? this.busyElsewhere(choice.visible, statuses);
+    const beam = pillBeam(primary, [...choice.visible, ...this.settings.activities.order], statuses);
     this.syncGlow(hidden ? null : beam, !hidden && choice.urgent && this.sheet.visible);
     this.sendMirror({
       sig, swap, bump: bump && !hiddenEverywhere, placed, w, h, orient, anchor, edge: s.edge,
@@ -1080,20 +1081,6 @@ export class Island {
     this.pillGlow.set(merged ? null : beamSpec(want), merged);
     this.mergedGlow.set(merged ? (cardUrgent ? urgentGlow : beamSpec(want)) : null);
     this.cardGlow.set(cardUrgent && !merged ? urgentGlow : null);
-  }
-
-  /**
-   * The pill's own activity has no glow: something busy elsewhere may still circle
-   * the edge (Claude thinking while music has the pill). Only orbits: a fill or a
-   * pulse belongs to whatever is on the pill.
-   */
-  private busyElsewhere(visible: string[], statuses: Map<string, ActivityStatus>): ActivityStatus['beam'] {
-    for (const id of [...visible, ...this.settings.activities.order]) {
-      const st = statuses.get(id);
-      const motion = st?.beam ? (st.beam.motion ?? (st.beam.urgent ? 'pulse' : 'orbit')) : null;
-      if (st?.active && st.weight === 'foreground' && motion === 'orbit') return st.beam;
-    }
-    return null;
   }
 
   /** Activity actions get the activity's id; island actions pass through. */

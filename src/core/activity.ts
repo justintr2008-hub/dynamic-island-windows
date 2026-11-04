@@ -28,6 +28,11 @@ export interface ActivityStatus {
    * Orange (the claude tone) is Claude's alone.
    */
   beam?: { tone: Tone; motion?: GlowMotion; value?: number; fast?: boolean; urgent?: boolean } | null;
+  /**
+   * Light kept on while another activity is in front (Claude running: blue). It wins over
+   * the front activity's own light unless that one wants the user (a pulse, urgent, a flash).
+   */
+  beamBehind?: { tone: Tone; motion?: GlowMotion; fast?: boolean } | null;
   /** Stay visible over a full-screen app (a game showing its frame rate). */
   overFullscreen?: boolean;
 }
